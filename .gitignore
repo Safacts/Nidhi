@@ -1,0 +1,11 @@
+# Nidhi/.gitignore
+
+# Environment variables
+backend/.env
+
+# Python cache
+**/__pycache__/
+*.pyc
+
+# Django DB file
+backend/db.sqlite3

@@ -1,0 +1,40 @@
+# C:\myprojects\nidhi\git\Nidhi\docker-compose.yml
+
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    depends_on:
+      - db
+  
+  frontend: # ADD THIS WHOLE SECTION
+    build: ./frontend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+
+  db:
+    image: postgres:13
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    environment:
+      - POSTGRES_DB=nidhi_db
+      - POSTGRES_USER=nidhi_user
+      - POSTGRES_PASSWORD=a_secure_password_for_nidhi
+    ports:
+      - "5433:5432"
+
+volumes:
+  postgres_data:
