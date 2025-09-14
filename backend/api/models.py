@@ -29,6 +29,9 @@ class DatabaseRequest(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     approved_by = models.CharField(max_length=150, blank=True, null=True) # Admin's username
-
+    db_password_temp = models.CharField(max_length=128, blank=True, null=True) # ADD THIS LINE
+    student_username = models.CharField(max_length=150)
+    college_id = models.CharField(max_length=100, db_index=True) # ADD THIS LINE (db_index makes lookups faster)
+    
     def __str__(self):
         return f"{self.db_name} requested by {self.student_username} ({self.status})"

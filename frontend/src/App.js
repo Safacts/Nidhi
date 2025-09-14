@@ -1,27 +1,34 @@
-// frontend/src/App.js
-import React, { useState, useEffect } from 'react';
+// frontend/src/App.js --- FINAL FEATURE-COMPLETE VERSION ---
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import './App.css';
+import logo from './logo.png'; // Make sure logo.png is in your src folder
 
-// --- API Configuration ---
 const API_URL = 'http://localhost:8001/api';
-// const API_URL = 'https://sunbeam-smiling-trout.ngrok-free.app/api/';
-const apiClient = axios.create({
-  baseURL: API_URL,
-});
+const apiClient = axios.create({ baseURL: API_URL });
 
-// --- Main App Component ---
 function App() {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(localStorage.getItem('nidhi_token'));
+  const [theme, setTheme] = useState(localStorage.getItem('nidhi_theme') || 'light');
+  const [notification, setNotification] = useState({ message: '', type: '' });
 
-  // This effect runs on app load to check if we have a stored user
   useEffect(() => {
     const storedUser = localStorage.getItem('nidhi_user');
-    if (storedUser && token) {
-      setUser(JSON.parse(storedUser));
-    }
+    if (storedUser && token) setUser(JSON.parse(storedUser));
   }, [token]);
+
+  useEffect(() => {
+    document.body.className = `${theme}-mode`;
+    localStorage.setItem('nidhi_theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => setTheme(theme === 'light' ? 'dark' : 'light');
+
+  const showNotification = (message, type = 'error') => {
+    setNotification({ message, type });
+    setTimeout(() => setNotification({ message: '', type: '' }), 5000);
+  };
 
   const handleLogin = (userData, tokenData) => {
     setUser(userData);
@@ -33,26 +40,40 @@ function App() {
   const handleLogout = () => {
     setUser(null);
     setToken(null);
-    localStorage.removeItem('nidhi_user');
-    localStorage.removeItem('nidhi_token');
+    localStorage.clear();
+    setTheme(localStorage.getItem('nidhi_theme') || 'light');
   };
-
-  if (!user) {
-    return <Login onLogin={handleLogin} />;
-  }
 
   return (
     <div className="App">
-      <DashboardHeader user={user} onLogout={handleLogout} />
-      {user.role === 'admin' ? <AdminDashboard token={token} user={user} /> : <StudentDashboard token={token} user={user} />}
+      <div className="theme-toggle" onClick={toggleTheme} title="Toggle Theme">
+        {theme === 'light' ? '🌙' : '☀️'}
+      </div>
+      <Notification notification={notification} />
+      {!user ? (
+        <Login onLogin={handleLogin} showNotification={showNotification} />
+      ) : (
+        <>
+          <DashboardHeader user={user} onLogout={handleLogout} />
+          {user.role === 'admin' || user.role === 'superuser' ? (
+            <AdminDashboard user={user} showNotification={showNotification} />
+          ) : (
+            <StudentDashboard user={user} showNotification={showNotification} />
+          )}
+        </>
+      )}
     </div>
   );
 }
 
-// --- Header Component ---
+const Notification = ({ notification }) => {
+  if (!notification.message) return null;
+  return <div className={`notification ${notification.type}`}>{notification.message}</div>;
+};
+
 const DashboardHeader = ({ user, onLogout }) => (
   <header className="dashboard-header">
-    <h1>Nidhi Dashboard</h1>
+    <img src={logo} alt="Nidhi Logo" className="header-logo" />
     <div>
       <span>Welcome, {user.username} ({user.role})</span>
       <button onClick={onLogout} className="logout-button">Logout</button>
@@ -60,23 +81,70 @@ const DashboardHeader = ({ user, onLogout }) => (
   </header>
 );
 
-// --- Login Component ---
-const Login = ({ onLogin }) => {
+const CredentialsModal = ({ credentials, onClose }) => (
+  <div className="credentials-modal">
+    <div className="credentials-content">
+      <h2>Database Credentials</h2>
+      <p><strong>Please copy these now. You will not be able to see the password again.</strong></p>
+      <div className="form-group"><label>Database Name</label><p>{credentials.db_name}</p></div>
+      <div className="form-group"><label>Username</label><p>{credentials.db_user}</p></div>
+      <div className="form-group"><label>Password</label><p>{credentials.db_password}</p></div>
+      <button onClick={onClose}>Close & Acknowledge</button>
+    </div>
+  </div>
+);
+
+const DeleteConfirmationModal = ({ request, onConfirm, onCancel }) => {
+  const [confirmationName, setConfirmationName] = useState('');
+  return (
+    <div className="credentials-modal">
+      <div className="credentials-content">
+        <h2>Delete Database</h2>
+        <p>This action is irreversible and will permanently delete the database and its user. To confirm, please type the database name: <strong>{request.db_name}</strong></p>
+        <div className="form-group">
+          <input type="text" value={confirmationName} onChange={(e) => setConfirmationName(e.target.value)} placeholder="Type database name here" />
+        </div>
+        <div className="modal-actions">
+          <button onClick={onCancel} className="action-button-secondary">Cancel</button>
+          <button onClick={() => onConfirm(request.db_name)} disabled={confirmationName !== request.db_name} className="action-button-danger">Delete Permanently</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ChangePasswordModal = ({ request, onConfirm, onCancel }) => {
+  const [newPassword, setNewPassword] = useState('');
+  return (
+    <div className="credentials-modal">
+      <div className="credentials-content">
+        <h2>Change Password for {request.db_user}</h2>
+        <div className="form-group">
+          <label>New Password (min 8 characters)</label>
+          <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+        </div>
+        <div className="modal-actions">
+          <button onClick={onCancel} className="action-button-secondary">Cancel</button>
+          <button onClick={() => onConfirm(newPassword)} disabled={newPassword.length < 8}>Confirm Change</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const Login = ({ onLogin, showNotification }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError('');
     setLoading(true);
     try {
       const response = await apiClient.post('/login/', { username, password });
       onLogin(response.data.user, response.data.tokens);
     } catch (err) {
-      setError('Login failed. Please check your credentials.');
-      console.error(err);
+      showNotification('Login failed. Please check your credentials or account status.');
     } finally {
       setLoading(false);
     }
@@ -84,54 +152,79 @@ const Login = ({ onLogin }) => {
 
   return (
     <div className="login-container">
-      <h2>Nidhi Login</h2>
+      <img src={logo} alt="Nidhi Logo" className="login-logo" />
+      <h2>Treasure Your Data, Effortlessly.</h2>
       <form onSubmit={handleSubmit}>
-        <div className="form-group">
-          <label>Username</label>
-          <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} required />
-        </div>
-        <div className="form-group">
-          <label>Password</label>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-        </div>
+        <div className="form-group"><label>Email or Roll Number</label><input type="text" value={username} onChange={(e) => setUsername(e.target.value)} required /></div>
+        <div className="form-group"><label>Password</label><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required /></div>
+        <div className="form-links"><a href="https://sunbeam-smiling-trout.ngrok-free.app/college/password_reset/" target="_blank" rel="noopener noreferrer">Forgot Password?</a></div>
         <button type="submit" disabled={loading}>{loading ? 'Logging in...' : 'Login'}</button>
-        {error && <p className="error-message">{error}</p>}
       </form>
     </div>
   );
 };
 
-
-// --- Student Dashboard ---
-const StudentDashboard = ({ token, user }) => {
+const StudentDashboard = ({ user, showNotification }) => {
   const [requests, setRequests] = useState([]);
   const [dbName, setDbName] = useState('');
   const [loading, setLoading] = useState(false);
+  const [revealedCreds, setRevealedCreds] = useState(null);
+  const [selectedRequest, setSelectedRequest] = useState(null);
+  const [isDeleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [isChangePassModalOpen, setChangePassModalOpen] = useState(false);
 
-  const fetchRequests = React.useCallback(async () => {
-      const headers = { 'X-User-Id': user.id, 'X-User-Role': user.role };
-      const response = await apiClient.get('/requests/my/', { headers });
+  const getHeaders = useCallback(() => ({
+    'X-User-Id': user.id, 'X-User-Name': user.username,
+    'X-User-Role': user.role, 'X-User-College-Id': user.college_id
+  }), [user]);
+
+  const fetchRequests = useCallback(async () => {
+    try {
+      const response = await apiClient.get('/requests/my/', { headers: getHeaders() });
       setRequests(response.data);
-  }, [user.id, user.role]);
+    } catch (error) { showNotification('Could not fetch your requests.'); }
+  }, [getHeaders, showNotification]);
 
-  useEffect(() => {
-      fetchRequests();
-  }, [fetchRequests]);
+  useEffect(() => { fetchRequests(); }, [fetchRequests]);
 
   const handleRequestSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     try {
-      const headers = { 'X-User-Id': user.id, 'X-User-Name': user.username, 'X-User-Role': user.role };
-      await apiClient.post('/requests/create/', { db_name: dbName }, { headers });
+      await apiClient.post('/requests/create/', { db_name: dbName }, { headers: getHeaders() });
       setDbName('');
-      fetchRequests(); // Refresh the list
-    } catch (error) {
-      alert('Failed to create request. Is the name already taken?');
-      console.error(error);
-    } finally {
-      setLoading(false);
-    }
+      showNotification('Request submitted successfully!', 'success');
+      fetchRequests();
+    } catch (error) { showNotification('Failed to create request. Is the name already taken?'); } finally { setLoading(false); }
+  };
+
+  const handleReveal = async (requestId) => {
+    try {
+      const response = await apiClient.post(`/requests/reveal/${requestId}/`, {}, { headers: getHeaders() });
+      setRevealedCreds(response.data);
+      fetchRequests();
+    } catch (error) { showNotification('Credentials have already been viewed and were deleted.'); }
+  };
+
+  const handleDeleteRequest = async () => {
+    if (!selectedRequest) return;
+    try {
+      await apiClient.post(`/requests/delete/${selectedRequest.id}/`, {}, { headers: getHeaders() });
+      showNotification(`Database '${selectedRequest.db_name}' deleted successfully!`, 'success');
+      fetchRequests();
+      setDeleteModalOpen(false);
+      setSelectedRequest(null);
+    } catch (error) { showNotification('Failed to delete database.'); }
+  };
+
+  const handleChangePassword = async (newPassword) => {
+    if (!selectedRequest) return;
+    try {
+      await apiClient.post(`/requests/change-password/${selectedRequest.id}/`, { password: newPassword }, { headers: getHeaders() });
+      showNotification('Password changed successfully!', 'success');
+      setChangePassModalOpen(false);
+      setSelectedRequest(null);
+    } catch (error) { showNotification(error.response?.data?.error || 'Failed to change password.'); }
   };
 
   return (
@@ -139,101 +232,89 @@ const StudentDashboard = ({ token, user }) => {
       <div className="dashboard-section">
         <h2>Request a New Database</h2>
         <form onSubmit={handleRequestSubmit}>
-          <div className="form-group">
-            <label>New Database Name (e.g., my-project-name)</label>
-            <input type="text" value={dbName} onChange={(e) => setDbName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))} required />
-          </div>
+          <div className="form-group"><label>New Database Name (e.g., my-project-name)</label><input type="text" value={dbName} onChange={(e) => setDbName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))} required /></div>
           <button type="submit" disabled={loading}>{loading ? 'Requesting...' : 'Submit Request'}</button>
         </form>
       </div>
       <div className="dashboard-section">
-        <h2>My Database Requests</h2>
-        <ul className="request-list">
+        <h2>My Databases</h2>
+        <div className="database-card-container">
+          {requests.length === 0 && <p>You have no active or pending database requests.</p>}
           {requests.map(req => (
-            <li key={req.id} className="request-item">
-              <span>{req.db_name}</span>
-              <span className={`status status-${req.status}`}>{req.status}</span>
-            </li>
+            <div key={req.id} className="database-card">
+              <div className="card-header">
+                <h3>{req.db_name}</h3>
+                <span className={`status status-${req.status}`}>{req.status}</span>
+              </div>
+              {req.status === 'approved' && (
+                <div className="card-body">
+                  <h4>Connection Info</h4>
+                  <p><strong>Host:</strong> localhost</p>
+                  <p><strong>Port:</strong> 5435</p>
+                  <p><strong>Username:</strong> {req.db_user}</p>
+                </div>
+              )}
+              <div className="card-actions">
+                {req.status === 'approved' && req.db_password_temp !== null && (
+                  <button onClick={() => handleReveal(req.id)}>View Password</button>
+                )}
+                {req.status === 'approved' && (
+                  <>
+                    <button onClick={() => { setSelectedRequest(req); setChangePassModalOpen(true); }} className="action-button-secondary">Change Password</button>
+                    <button onClick={() => { setSelectedRequest(req); setDeleteModalOpen(true); }} className="action-button-danger">Delete</button>
+                  </>
+                )}
+              </div>
+            </div>
           ))}
-        </ul>
+        </div>
       </div>
+      {revealedCreds && <CredentialsModal credentials={revealedCreds} onClose={() => setRevealedCreds(null)} />}
+      {isDeleteModalOpen && <DeleteConfirmationModal request={selectedRequest} onConfirm={handleDeleteRequest} onCancel={() => setDeleteModalOpen(false)} />}
+      {isChangePassModalOpen && <ChangePasswordModal request={selectedRequest} onConfirm={handleChangePassword} onCancel={() => setChangePassModalOpen(false)} />}
     </>
   );
 };
 
-// --- Admin Dashboard ---
-const AdminDashboard = ({ token, user }) => {
+const AdminDashboard = ({ user, showNotification }) => {
   const [pendingRequests, setPendingRequests] = useState([]);
-  const [approvedCredentials, setApprovedCredentials] = useState(null);
 
-  const fetchPending = React.useCallback(async () => {
-      const headers = { 'X-User-Id': user.id, 'X-User-Name': user.username, 'X-User-Role': user.role };
-      const response = await apiClient.get('/admin/requests/pending/', { headers });
+  const getHeaders = useCallback(() => ({
+    'X-User-Id': user.id, 'X-User-Name': user.username,
+    'X-User-Role': user.role, 'X-User-College-Id': user.college_id
+  }), [user]);
+
+  const fetchPending = useCallback(async () => {
+    try {
+      const response = await apiClient.get('/admin/requests/pending/', { headers: getHeaders() });
       setPendingRequests(response.data);
-  }, [user.id, user.username, user.role]);
+    } catch (error) { showNotification('Could not fetch pending requests.'); }
+  }, [getHeaders, showNotification]);
 
-  useEffect(() => {
-      fetchPending();
-  }, [fetchPending]);
+  useEffect(() => { fetchPending(); }, [fetchPending]);
 
   const handleApprove = async (requestId) => {
     try {
-      const headers = { 'X-User-Id': user.id, 'X-User-Name': user.username, 'X-User-Role': user.role };
-      const response = await apiClient.post(`/admin/requests/approve/${requestId}/`, {}, { headers });
-      setApprovedCredentials(response.data);
-      fetchPending(); // Refresh the list
-    } catch (error) {
-      alert('Failed to approve request.');
-      console.error(error);
-    }
+      await apiClient.post(`/admin/requests/approve/${requestId}/`, {}, { headers: getHeaders() });
+      showNotification('Request approved successfully!', 'success');
+      fetchPending();
+    } catch (error) { showNotification('Failed to approve request.'); }
   };
 
   return (
-    <>
-      <div className="dashboard-section">
-        <h2>Pending Approval Requests</h2>
-        <ul className="pending-list">
-          {pendingRequests.map(req => (
-            <li key={req.id} className="pending-item">
-              <div>
-                <strong>{req.db_name}</strong>
-                <br />
-                <small>Requested by: {req.student_username}</small>
-              </div>
-              <button onClick={() => handleApprove(req.id)} className="approve-button">Approve</button>
-            </li>
-          ))}
-        </ul>
-      </div>
-      {approvedCredentials && (
-        <CredentialsModal credentials={approvedCredentials} onClose={() => setApprovedCredentials(null)} />
-      )}
-    </>
+    <div className="dashboard-section">
+      <h2>Pending Approval Requests</h2>
+      <ul className="pending-list">
+        {pendingRequests.length === 0 && <li>No pending requests.</li>}
+        {pendingRequests.map(req => (
+          <li key={req.id} className="pending-item">
+            <div><strong>{req.db_name}</strong><br /><small>Requested by: {req.student_username}</small></div>
+            <button onClick={() => handleApprove(req.id)} className="approve-button">Approve</button>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 };
-
-// --- Credentials Modal ---
-const CredentialsModal = ({ credentials, onClose }) => (
-  <div className="credentials-modal">
-    <div className="credentials-content">
-      <h2>Database Created!</h2>
-      <p><strong>Please copy these credentials now. You will not be able to see the password again.</strong></p>
-      <div className="form-group">
-        <label>Database Name</label>
-        <p>{credentials.db_name}</p>
-      </div>
-      <div className="form-group">
-        <label>Username</label>
-        <p>{credentials.db_user}</p>
-      </div>
-      <div className="form-group">
-        <label>Password</label>
-        <p>{credentials.db_password}</p>
-      </div>
-      <button onClick={onClose}>Close</button>
-    </div>
-  </div>
-);
-
 
 export default App;

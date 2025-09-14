@@ -161,4 +161,5 @@ CORS_ALLOW_HEADERS = [
     'x-user-id',
     'x-user-name',
     'x-user-role',
+    'x-user-college-id', # <-- ADD THIS LINE
 ]

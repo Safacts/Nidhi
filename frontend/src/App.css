@@ -1,180 +1,263 @@
-/* frontend/src/App.css */
+/* --- frontend/src/App.css --- FINAL VERSION --- */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
 
 :root {
-  --teal: #03DAC6;
-  --charcoal: #333333;
-  --dark-bg: #121212;
-  --light-bg: #1e1e1e;
-  --text-primary: #ffffff;
-  --text-secondary: #b3b3b3;
-  --border-color: #444444;
+  --ease: all 0.2s ease-in-out;
+  --success: #27ae60;
+  --error: #c0392b;
 }
 
+/* --- LIGHT MODE (DEFAULT) --- */
+body.light-mode {
+  --bg-primary: #f0f2f5;    /* Light gray page background */
+  --bg-secondary: #ffffff;  /* White component background */
+  --text-primary: #1c1e21;  /* Dark text */
+  --text-secondary: #65676b;/* Gray secondary text */
+  --border-color: #ced0d4;  /* Light gray border */
+  --teal: #008a7c;          /* A darker, more readable teal for light backgrounds */
+  --charcoal: #ffffff;      /* White text for buttons */
+}
+
+/* --- DARK MODE --- */
+body.dark-mode {
+  --bg-primary: #121212;
+  --bg-secondary: #1e1e1e;
+  --text-primary: #e4e6eb;
+  --text-secondary: #b0b3b8;
+  --border-color: #333333;
+  --teal: #03DAC6;          /* Bright teal for dark backgrounds */
+  --charcoal: #1a1a1a;      /* Dark text for buttons */
+}
+
+/* --- GLOBAL STYLES --- */
 body {
-  margin: 0;
-  font-family: 'Inter', sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  background-color: var(--dark-bg);
+  margin: 0; font-family: 'Inter', sans-serif;
+  background-color: var(--bg-primary);
   color: var(--text-primary);
+  transition: var(--ease);
+}
+.App { max-width: 900px; margin: 40px auto; padding: 20px; }
+h1, h2 { color: var(--teal); font-weight: 700; margin-top: 0; }
+a { color: var(--teal); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* --- THEME TOGGLE --- */
+.theme-toggle {
+  position: fixed; top: 20px; right: 20px;
+  cursor: pointer; font-size: 24px; z-index: 3000;
 }
 
-.App {
-  max-width: 900px;
-  margin: 40px auto;
-  padding: 20px;
-}
-
-/* --- Login Form --- */
+/* --- LOGIN PAGE --- */
 .login-container {
-  max-width: 400px;
-  margin: 100px auto;
-  padding: 40px;
-  background-color: var(--light-bg);
-  border-radius: 8px;
-  border: 1px solid var(--border-color);
-  text-align: center;
+  max-width: 400px; margin: 80px auto; padding: 40px;
+  background-color: var(--bg-secondary);
+  border-radius: 8px; border: 1px solid var(--border-color);
+  text-align: center; transition: var(--ease);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
-
-h1, h2 {
-  color: var(--teal);
-  font-weight: 700;
-  margin-top: 0;
-}
-
-.form-group {
-  margin-bottom: 20px;
-  text-align: left;
-}
-
-label {
-  display: block;
-  margin-bottom: 5px;
-  color: var(--text-secondary);
-}
-
+body.dark-mode .login-container { box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); }
+.login-logo { width: 80px; margin-bottom: 20px; }
+.form-group { margin-bottom: 20px; text-align: left; }
+label { display: block; margin-bottom: 8px; color: var(--text-secondary); font-size: 14px; }
 input {
-  width: 100%;
-  padding: 10px;
-  border-radius: 4px;
-  border: 1px solid var(--border-color);
-  background-color: var(--dark-bg);
-  color: var(--text-primary);
-  font-size: 16px;
+  width: 100%; box-sizing: border-box; padding: 12px;
+  border-radius: 4px; border: 1px solid var(--border-color);
+  background-color: var(--bg-primary);
+  color: var(--text-primary); font-size: 16px;
+  transition: var(--ease);
 }
-
+.form-links { text-align: right; margin-bottom: 20px; }
 button {
-  width: 100%;
-  padding: 12px;
-  border-radius: 4px;
-  border: none;
-  background-color: var(--teal);
-  color: var(--charcoal);
-  font-size: 16px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: background-color 0.2s;
+  width: 100%; padding: 12px; border-radius: 4px; border: none;
+  background-color: var(--teal); color: var(--charcoal);
+  font-size: 16px; font-weight: 700; cursor: pointer;
+  transition: filter 0.2s;
 }
+button:hover { filter: brightness(110%); }
+button:disabled { background-color: #555; cursor: not-allowed; }
 
-button:hover {
-  background-color: #018786;
-}
-
-button:disabled {
-  background-color: #555;
-  cursor: not-allowed;
-}
-
-.error-message {
-  color: #cf6679;
-  margin-top: 15px;
-}
-
-/* --- Dashboard --- */
+/* --- DASHBOARD --- */
 .dashboard-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 30px;
-  border-bottom: 1px solid var(--border-color);
-  padding-bottom: 15px;
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 30px; border-bottom: 1px solid var(--border-color);
+  padding-bottom: 15px; transition: var(--ease);
 }
-
+.header-logo { height: 40px; }
 .logout-button {
-  width: auto;
-  padding: 8px 15px;
-  background-color: transparent;
-  border: 1px solid var(--teal);
-  color: var(--teal);
+  width: auto; padding: 8px 15px; background-color: transparent;
+  border: 1px solid var(--teal); color: var(--teal);
+  margin-left: 20px;
+}
+.dashboard-section {
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px; padding: 25px; margin-bottom: 30px;
+  transition: var(--ease);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+body.dark-mode .dashboard-section { box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); }
+.request-list, .pending-list { list-style-type: none; padding: 0; margin: 0; }
+.request-item, .pending-item {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 15px; border-bottom: 1px solid var(--border-color);
+  transition: var(--ease);
+}
+.request-item:last-child, .pending-item:last-child { border-bottom: none; }
+.status {
+  margin-left: 15px; padding: 5px 10px; border-radius: 12px;
+  font-size: 12px; font-weight: 500; text-transform: capitalize;
+  color: #fff;
+}
+.status-pending { background-color: #f39c12; }
+.status-approved { background-color: var(--success); }
+.status-rejected, .status-error { background-color: var(--error); }
+.approve-button { width: auto; padding: 8px 15px; font-size: 14px; }
+
+/* --- Reusable Components (Modal, Notification) --- */
+.credentials-modal {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex; justify-content: center; align-items: center; z-index: 1000;
+}
+.credentials-content {
+  background-color: var(--bg-secondary); color: var(--text-primary);
+  padding: 40px; border-radius: 8px; width: 500px;
+  border: 1px solid var(--border-color);
+}
+.credentials-content p {
+  background-color: var(--bg-primary); padding: 10px; border-radius: 4px;
+  word-wrap: break-word; user-select: all;
+}
+.notification {
+  position: fixed; top: 20px; right: 20px;
+  padding: 15px 25px; border-radius: 8px; color: #fff; font-weight: 500;
+  z-index: 2000; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+  animation: fadeInOut 5s forwards;
+}
+.notification.success { background-color: var(--success); }
+.notification.error { background-color: var(--error); }
+@keyframes fadeInOut {
+  0% { opacity: 0; transform: translateY(-20px); }
+  10% { opacity: 1; transform: translateY(0); }
+  90% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-20px); }
 }
 
-.dashboard-section {
-  background-color: var(--light-bg);
+
+/* --- ADD THESE STYLES TO THE END OF App.css --- */
+
+.database-card-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 20px;
+}
+
+.database-card {
+  background-color: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  padding: 25px;
-  margin-bottom: 30px;
+  display: flex;
+  flex-direction: column;
+  transition: var(--ease);
 }
 
-.request-list, .pending-list {
-  list-style-type: none;
-  padding: 0;
-}
-
-.request-item, .pending-item {
+.card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 15px;
   border-bottom: 1px solid var(--border-color);
 }
+.card-header h3 { margin: 0; }
 
-.request-item:last-child, .pending-item:last-child {
-  border-bottom: none;
+.card-body {
+  padding: 15px;
+  flex-grow: 1;
 }
+.card-body p { margin: 5px 0; }
 
-.status {
-  padding: 5px 10px;
-  border-radius: 12px;
-  font-size: 12px;
-  font-weight: 500;
+.card-actions {
+  display: flex;
+  gap: 10px;
+  padding: 15px;
+  border-top: 1px solid var(--border-color);
 }
-
-.status-pending { background-color: #f39c12; color: #fff; }
-.status-approved { background-color: #2ecc71; color: #fff; }
-.status-rejected { background-color: #e74c3c; color: #fff; }
-.status-error { background-color: #95a5a6; color: #fff; }
-
-.approve-button {
-  width: auto;
-  padding: 8px 15px;
+.card-actions button {
+  width: 100%;
+  padding: 8px;
   font-size: 14px;
 }
 
-.credentials-modal {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background-color: rgba(0, 0, 0, 0.7);
+.action-button-secondary {
+  background-color: transparent;
+  border: 1px solid var(--text-secondary);
+  color: var(--text-secondary);
+}
+.action-button-danger {
+  background-color: var(--error);
+  color: #fff;
+}
+
+.modal-actions {
   display: flex;
-  justify-content: center;
-  align-items: center;
+  gap: 10px;
+  margin-top: 20px;
+}/* --- ADD THESE STYLES TO THE END OF App.css --- */
+
+.database-card-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 20px;
 }
 
-.credentials-content {
-  background-color: var(--light-bg);
-  padding: 40px;
-  border-radius: 8px;
-  width: 500px;
+.database-card {
+  background-color: var(--bg-primary);
   border: 1px solid var(--border-color);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  transition: var(--ease);
 }
 
-.credentials-content p {
-  background-color: var(--dark-bg);
-  padding: 10px;
-  border-radius: 4px;
-  word-wrap: break-word;
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px;
+  border-bottom: 1px solid var(--border-color);
+}
+.card-header h3 { margin: 0; }
+
+.card-body {
+  padding: 15px;
+  flex-grow: 1;
+}
+.card-body p { margin: 5px 0; }
+
+.card-actions {
+  display: flex;
+  gap: 10px;
+  padding: 15px;
+  border-top: 1px solid var(--border-color);
+}
+.card-actions button {
+  width: 100%;
+  padding: 8px;
+  font-size: 14px;
+}
+
+.action-button-secondary {
+  background-color: transparent;
+  border: 1px solid var(--text-secondary);
+  color: var(--text-secondary);
+}
+.action-button-danger {
+  background-color: var(--error);
+  color: #fff;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
 }
