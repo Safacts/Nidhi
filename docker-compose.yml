@@ -1,5 +1,4 @@
 # C:\myprojects\nidhi\git\Nidhi\docker-compose.yml
-
 version: '3.8'
 
 services:
@@ -9,13 +8,14 @@ services:
     volumes:
       - ./backend:/app
     ports:
-      - "8000:8000"
+      - "8001:8000" # Keep Nidhi on port 8001
     env_file:
       - ./backend/.env
     depends_on:
       - db
-  
-  frontend: # ADD THIS WHOLE SECTION
+      - main_db # Add dependency on the new main database
+
+  frontend:
     build: ./frontend
     volumes:
       - ./frontend:/app
@@ -25,16 +25,31 @@ services:
     environment:
       - CHOKIDAR_USEPOLLING=true
 
+  # This is Nidhi's OWN database for storing requests
   db:
     image: postgres:13
     volumes:
-      - postgres_data:/var/lib/postgresql/data/
+      - nidhi_postgres_data:/var/lib/postgresql/data/
     environment:
       - POSTGRES_DB=nidhi_db
       - POSTGRES_USER=nidhi_user
       - POSTGRES_PASSWORD=a_secure_password_for_nidhi
     ports:
-      - "5433:5432"
+      - "5433:5432" # Use a unique host port for Nidhi's internal DB
+
+  # --- ADD THIS ENTIRE SERVICE ---
+  # This is the MAIN PostgreSQL server that Nidhi will manage
+  main_db:
+    image: postgres:13
+    volumes:
+      - main_postgres_data:/var/lib/postgresql/data/
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=AADISHESHU1.
+      - PGTZ=Asia/Kolkata # <-- ADD THIS LINE
+    ports:
+      - "5435:5432" # Expose the main DB on the standard port 5432
 
 volumes:
-  postgres_data:
+  nidhi_postgres_data:
+  main_postgres_data: # Add the new volume

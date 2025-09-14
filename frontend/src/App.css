@@ -1,38 +1,180 @@
+/* frontend/src/App.css */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
+
+:root {
+  --teal: #03DAC6;
+  --charcoal: #333333;
+  --dark-bg: #121212;
+  --light-bg: #1e1e1e;
+  --text-primary: #ffffff;
+  --text-secondary: #b3b3b3;
+  --border-color: #444444;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--dark-bg);
+  color: var(--text-primary);
+}
+
 .App {
+  max-width: 900px;
+  margin: 40px auto;
+  padding: 20px;
+}
+
+/* --- Login Form --- */
+.login-container {
+  max-width: 400px;
+  margin: 100px auto;
+  padding: 40px;
+  background-color: var(--light-bg);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
   text-align: center;
 }
 
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
+h1, h2 {
+  color: var(--teal);
+  font-weight: 700;
+  margin-top: 0;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
-  }
+.form-group {
+  margin-bottom: 20px;
+  text-align: left;
 }
 
-.App-header {
-  background-color: #282c34;
-  min-height: 100vh;
+label {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--text-secondary);
+}
+
+input {
+  width: 100%;
+  padding: 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  background-color: var(--dark-bg);
+  color: var(--text-primary);
+  font-size: 16px;
+}
+
+button {
+  width: 100%;
+  padding: 12px;
+  border-radius: 4px;
+  border: none;
+  background-color: var(--teal);
+  color: var(--charcoal);
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+button:hover {
+  background-color: #018786;
+}
+
+button:disabled {
+  background-color: #555;
+  cursor: not-allowed;
+}
+
+.error-message {
+  color: #cf6679;
+  margin-top: 15px;
+}
+
+/* --- Dashboard --- */
+.dashboard-header {
   display: flex;
-  flex-direction: column;
+  justify-content: space-between;
   align-items: center;
+  margin-bottom: 30px;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 15px;
+}
+
+.logout-button {
+  width: auto;
+  padding: 8px 15px;
+  background-color: transparent;
+  border: 1px solid var(--teal);
+  color: var(--teal);
+}
+
+.dashboard-section {
+  background-color: var(--light-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 25px;
+  margin-bottom: 30px;
+}
+
+.request-list, .pending-list {
+  list-style-type: none;
+  padding: 0;
+}
+
+.request-item, .pending-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.request-item:last-child, .pending-item:last-child {
+  border-bottom: none;
+}
+
+.status {
+  padding: 5px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.status-pending { background-color: #f39c12; color: #fff; }
+.status-approved { background-color: #2ecc71; color: #fff; }
+.status-rejected { background-color: #e74c3c; color: #fff; }
+.status-error { background-color: #95a5a6; color: #fff; }
+
+.approve-button {
+  width: auto;
+  padding: 8px 15px;
+  font-size: 14px;
+}
+
+.credentials-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: flex;
   justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
+  align-items: center;
 }
 
-.App-link {
-  color: #61dafb;
+.credentials-content {
+  background-color: var(--light-bg);
+  padding: 40px;
+  border-radius: 8px;
+  width: 500px;
+  border: 1px solid var(--border-color);
 }
 
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+.credentials-content p {
+  background-color: var(--dark-bg);
+  padding: 10px;
+  border-radius: 4px;
+  word-wrap: break-word;
 }
