@@ -1,11 +1,17 @@
-// frontend/src/App.js --- FINAL FEATURE-COMPLETE V1.1 ---
+// frontend/src/App.js --- FINAL, UNIFIED PRODUCTION VERSION V1.2 ---
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import './App.css';
-import logo from './logo.png'; // Make sure logo.png is in your src folder
+import logo from './logo.png';
 
-const API_URL = '/nidhi/api';
-const apiClient = axios.create({ baseURL: API_URL });
+// --- PRODUCTION API CLIENTS ---
+// This client talks to the Nidhi-specific API endpoints, routed by Nginx at /nidhi/api/
+const NIDHI_API_URL = '/nidhi/api';
+const nidhiApiClient = axios.create({ baseURL: NIDHI_API_URL });
+
+// This client talks to the shared Jnwn Login API, routed by Nginx at /api/
+const AUTH_API_URL = '/api';
+const authApiClient = axios.create({ baseURL: AUTH_API_URL });
 
 function App() {
   const [user, setUser] = useState(null);
@@ -62,64 +68,22 @@ function App() {
           )}
         </>
       )}
-
-    
       <a href="https://aadisheshu.onrender.com/" target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
         <div className="signature">
           Made with 💖 by Aadi
           <svg className="feather" viewBox="0 0 100 250" xmlns="http://www.w3.org/2000/svg">
             <defs>
-              {/* This gradient uses YOUR color palette for the main feather body */}
-              <linearGradient id="userGradient" x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0%" stopColor="#1eb980"/>
-                  <stop offset="25%" stopColor="#17bebb"/>
-                  <stop offset="50%" stopColor="#4099ff"/>
-                  <stop offset="75%" stopColor="#7a5fff"/>
-                  <stop offset="100%" stopColor="#f758c2"/>
-              </linearGradient>
-
-              {/* This gradient uses the end of YOUR palette for the eye */}
-              <radialGradient id="eyeGradient" cx="50%" cy="50%" r="50%">
-                <stop offset="0%" stopColor="#fecd1a" />
-                <stop offset="100%" stopColor="#f758c2" />
-              </radialGradient>
+              <linearGradient id="userGradient" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor="#1eb980"/><stop offset="25%" stopColor="#17bebb"/><stop offset="50%" stopColor="#4099ff"/><stop offset="75%" stopColor="#7a5fff"/><stop offset="100%" stopColor="#f758c2"/></linearGradient>
+              <radialGradient id="eyeGradient" cx="50%" cy="50%" r="50%"><stop offset="0%" stopColor="#fecd1a" /><stop offset="100%" stopColor="#f758c2" /></radialGradient>
             </defs>
-
-            {/* Main feather shape, filled with your primary gradient */}
-            <path
-              d="M50 250 Q 0 150, 50 0 Q 100 150, 50 250 Z"
-              fill="url(#userGradient)"
-            />
-            
-            {/* The "Eye" of the feather, layered */}
-            <path
-              d="M50 90 C 20 60, 80 60, 50 90 Z"
-              fill="url(#eyeGradient)"
-            />
-            <path
-              d="M50 85 C 30 58, 70 58, 50 85 Z"
-              fill="#4099ff" /* Using the blue from your palette */
-            />
-            <path
-              d="M50 78 C 40 58, 60 58, 50 78 Z"
-              fill="#000000"
-              opacity="0.5"
-            />
-            
-            {/* Central Stem (Rachis) */}
-            <path
-              d="M50 250 L 50 60"
-              stroke="var(--bg-secondary)"
-              strokeWidth="1.5"
-              fill="none"
-              opacity="0.6"
-            />
+            <path d="M50 250 Q 0 150, 50 0 Q 100 150, 50 250 Z" fill="url(#userGradient)" />
+            <path d="M50 90 C 20 60, 80 60, 50 90 Z" fill="url(#eyeGradient)" />
+            <path d="M50 85 C 30 58, 70 58, 50 85 Z" fill="#4099ff" />
+            <path d="M50 78 C 40 58, 60 58, 50 78 Z" fill="#000000" opacity="0.5" />
+            <path d="M50 250 L 50 60" stroke="var(--bg-secondary)" strokeWidth="1.5" fill="none" opacity="0.6" />
           </svg>
         </div>
       </a>
-
-      {/* --- END OF SIGNATURE --- */}
-
     </div>
   );
 }
@@ -158,7 +122,7 @@ const DeleteConfirmationModal = ({ request, onConfirm, onCancel }) => {
     <div className="credentials-modal">
       <div className="credentials-content">
         <h2>Delete Database</h2>
-        <p>This action is irreversible and will permanently delete the database and its user. To confirm, please type the database name: <strong>{request.db_name}</strong></p>
+        <p>This action is irreversible. To confirm, please type the database name: <strong>{request.db_name}</strong></p>
         <div className="form-group">
           <input type="text" value={confirmationName} onChange={(e) => setConfirmationName(e.target.value)} placeholder="Type database name here" />
         </div>
@@ -196,22 +160,18 @@ const ViewTablesModal = ({ request, onCancel, showNotification }) => {
   const [loading, setLoading] = useState(false);
 
   const getHeaders = useCallback(() => ({
-    'X-User-Id': request.student_id,
-    'X-User-Role': 'student', // Use a generic role for this action
-    'X-User-College-Id': request.college_id
+    'X-User-Id': request.student_id, 'X-User-Role': 'student', 'X-User-College-Id': request.college_id
   }), [request]);
 
   const handleFetchTables = async () => {
     setLoading(true);
     try {
-      const response = await apiClient.post(`/requests/tables/${request.id}/`, { password }, { headers: getHeaders() });
+      const response = await nidhiApiClient.post(`/requests/tables/${request.id}/`, { password }, { headers: getHeaders() });
       setTables(response.data.tables);
     } catch (error) {
       showNotification(error.response?.data?.error || "Failed to connect.");
       setTables(null);
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
   return (
@@ -221,9 +181,7 @@ const ViewTablesModal = ({ request, onCancel, showNotification }) => {
         {!tables ? (
           <>
             <p>Please enter the password for user <strong>{request.db_user}</strong> to connect.</p>
-            <div className="form-group">
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-            </div>
+            <div className="form-group"><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></div>
             <div className="modal-actions">
               <button onClick={onCancel} className="action-button-secondary">Cancel</button>
               <button onClick={handleFetchTables} disabled={!password || loading}>{loading ? 'Connecting...' : 'Fetch Tables'}</button>
@@ -253,8 +211,12 @@ const Login = ({ onLogin, showNotification }) => {
     e.preventDefault();
     setLoading(true);
     try {
-      const response = await apiClient.post('/login/', { username, password });
-      onLogin(response.data.user, response.data.tokens);
+      const tokenResponse = await authApiClient.post('/users/token/', { username, password });
+      const accessToken = tokenResponse.data.access;
+      const profileResponse = await authApiClient.get('/users/profile/', {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+      onLogin(profileResponse.data, tokenResponse.data);
     } catch (err) {
       showNotification('Login failed. Please check your credentials or account status.');
     } finally {
@@ -293,7 +255,7 @@ const StudentDashboard = ({ user, showNotification }) => {
 
   const fetchRequests = useCallback(async () => {
     try {
-      const response = await apiClient.get('/requests/my/', { headers: getHeaders() });
+      const response = await nidhiApiClient.get('/requests/my/', { headers: getHeaders() });
       setRequests(response.data);
     } catch (error) { showNotification('Could not fetch your requests.'); }
   }, [getHeaders, showNotification]);
@@ -301,48 +263,41 @@ const StudentDashboard = ({ user, showNotification }) => {
   useEffect(() => { fetchRequests(); }, [fetchRequests]);
 
   const handleRequestSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
+    e.preventDefault(); setLoading(true);
     try {
-      await apiClient.post('/requests/create/', { db_name: dbName }, { headers: getHeaders() });
-      setDbName('');
-      showNotification('Request submitted successfully!', 'success');
-      fetchRequests();
+      await nidhiApiClient.post('/requests/create/', { db_name: dbName }, { headers: getHeaders() });
+      setDbName(''); showNotification('Request submitted successfully!', 'success'); fetchRequests();
     } catch (error) { showNotification(error.response?.data?.error || 'Failed to create request.'); } finally { setLoading(false); }
   };
 
   const handleReveal = async (requestId) => {
     try {
-      const response = await apiClient.post(`/requests/reveal/${requestId}/`, {}, { headers: getHeaders() });
-      setRevealedCreds(response.data);
-      fetchRequests();
+      const response = await nidhiApiClient.post(`/requests/reveal/${requestId}/`, {}, { headers: getHeaders() });
+      setRevealedCreds(response.data); fetchRequests();
     } catch (error) { showNotification('Credentials have already been viewed and were deleted.'); }
   };
 
   const handleDeleteRequest = async () => {
     if (!selectedRequest) return;
     try {
-      await apiClient.post(`/requests/delete/${selectedRequest.id}/`, {}, { headers: getHeaders() });
+      await nidhiApiClient.post(`/requests/delete/${selectedRequest.id}/`, {}, { headers: getHeaders() });
       showNotification(`Database '${selectedRequest.db_name}' deleted successfully!`, 'success');
-      fetchRequests();
-      setDeleteModalOpen(false);
-      setSelectedRequest(null);
+      fetchRequests(); setDeleteModalOpen(false); setSelectedRequest(null);
     } catch (error) { showNotification('Failed to delete database.'); }
   };
 
   const handleChangePassword = async (newPassword) => {
     if (!selectedRequest) return;
     try {
-      await apiClient.post(`/requests/change-password/${selectedRequest.id}/`, { password: newPassword }, { headers: getHeaders() });
+      await nidhiApiClient.post(`/requests/change-password/${selectedRequest.id}/`, { password: newPassword }, { headers: getHeaders() });
       showNotification('Password changed successfully!', 'success');
-      setChangePassModalOpen(false);
-      setSelectedRequest(null);
+      setChangePassModalOpen(false); setSelectedRequest(null);
     } catch (error) { showNotification(error.response?.data?.error || 'Failed to change password.'); }
   };
   
   const handleGetSize = async (req) => {
     try {
-      const response = await apiClient.get(`/requests/size/${req.id}/`, { headers: getHeaders() });
+      const response = await nidhiApiClient.get(`/requests/size/${req.id}/`, { headers: getHeaders() });
       setRequests(currentRequests => currentRequests.map(r => r.id === req.id ? { ...r, size: response.data.size } : r));
     } catch (error) { showNotification('Failed to get database size.'); }
   };
@@ -404,7 +359,7 @@ const AdminDashboard = ({ user, showNotification }) => {
 
   const fetchPending = useCallback(async () => {
     try {
-      const response = await apiClient.get('/admin/requests/pending/', { headers: getHeaders() });
+      const response = await nidhiApiClient.get('/admin/requests/pending/', { headers: getHeaders() });
       setPendingRequests(response.data);
     } catch (error) { showNotification('Could not fetch pending requests.'); }
   }, [getHeaders, showNotification]);
@@ -413,7 +368,7 @@ const AdminDashboard = ({ user, showNotification }) => {
 
   const handleApprove = async (requestId) => {
     try {
-      await apiClient.post(`/admin/requests/approve/${requestId}/`, {}, { headers: getHeaders() });
+      await nidhiApiClient.post(`/admin/requests/approve/${requestId}/`, {}, { headers: getHeaders() });
       showNotification('Request approved successfully!', 'success');
       fetchPending();
     } catch (error) { showNotification('Failed to approve request.'); }
@@ -432,7 +387,6 @@ const AdminDashboard = ({ user, showNotification }) => {
         ))}
       </ul>
     </div>
-    
   );
 };
 
