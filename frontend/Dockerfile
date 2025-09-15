@@ -10,8 +10,14 @@ COPY package*.json ./
 # Install dependencies
 RUN npm install
 
-# Copy the rest of the application files
-COPY . .
 
-# Start the React development server
-CMD ["npm", "start"]
+# ✅ ADD THIS LINE
+RUN npm install -g serve
+
+COPY . .
+RUN npm run build
+
+EXPOSE 3000
+
+# This command is now correct
+CMD [ "serve", "-s", "build", "-l", "3000" ]
