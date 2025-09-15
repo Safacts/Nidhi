@@ -4,7 +4,7 @@ import axios from 'axios';
 import './App.css';
 import logo from './logo.png'; // Make sure logo.png is in your src folder
 
-const API_URL = '/api';
+const API_URL = '/nidhi/api';
 const apiClient = axios.create({ baseURL: API_URL });
 
 function App() {
