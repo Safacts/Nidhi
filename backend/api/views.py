@@ -18,6 +18,27 @@ from .permissions import IsAuthenticatedUser, IsAdminUser
 # --- Constants ---
 ATTENDANCE_API_URL = os.getenv("ATTENDANCE_API_URL")
 
+
+
+# Define the quota limit at the top of the file
+DATABASE_QUOTA_PER_USER = 5
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticatedUser])
+def create_database_request(request):
+    user_id = request.headers.get('X-User-Id')
+    user_name = request.headers.get('X-User-Name')
+    college_id = request.headers.get('X-User-College-Id')
+    
+    # --- QUOTA CHECK LOGIC ---
+    current_db_count = DatabaseRequest.objects.filter(student_id=user_id).count()
+    if current_db_count >= DATABASE_QUOTA_PER_USER:
+        return Response(
+            {"error": f"You have reached your maximum quota of {DATABASE_QUOTA_PER_USER} databases."},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    # --- END OF QUOTA CHECK ---
+
 # --- Authentication View ---
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -49,21 +70,25 @@ def login_view(request):
     return Response({"tokens": tokens, "user": user_profile}, status=status.HTTP_200_OK)
 
 
-# --- User/Faculty Views ---
+# --- (create_database_request is now upgraded with QUOTAS) ---
 @api_view(['POST'])
 @permission_classes([IsAuthenticatedUser])
 def create_database_request(request):
     user_id = request.headers.get('X-User-Id')
+    current_db_count = DatabaseRequest.objects.filter(student_id=user_id).count()
+    if current_db_count >= DATABASE_QUOTA_PER_USER:
+        return Response({"error": f"You have reached your maximum quota of {DATABASE_QUOTA_PER_USER} databases."}, status=status.HTTP_403_FORBIDDEN)
+    
+    # ... (rest of the create logic is the same) ...
     user_name = request.headers.get('X-User-Name')
-    college_id = request.headers.get('X-User-College-Id') # Get the college_id
-
+    college_id = request.headers.get('X-User-College-Id')
     serializer = DatabaseRequestSerializer(data=request.data)
     if serializer.is_valid():
         db_user = serializer.validated_data['db_name'].replace('-', '_')[:50] + "_user"
-        # Save the college_id with the request
         serializer.save(student_id=user_id, student_username=user_name, db_user=db_user, college_id=college_id)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticatedUser])
@@ -243,6 +268,76 @@ def change_password(request, request_id):
         return Response({"message": "Database password changed successfully."}, status=status.HTTP_200_OK)
     except Exception as e:
         return Response({"error": f"Failed to change password: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    finally:
+        if conn:
+            conn.close()
+
+# C:\myprojects\nidhi\git\Nidhi\backend\api\views.py - ADD THESE VIEWS
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticatedUser])
+def get_database_size(request, request_id):
+    user_id = request.headers.get('X-User-Id')
+    try:
+        db_request = DatabaseRequest.objects.get(id=request_id, student_id=user_id)
+    except DatabaseRequest.DoesNotExist:
+        return Response({"error": "Request not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    conn = None
+    try:
+        # We can connect as the superuser to get metadata
+        conn = psycopg2.connect(dbname="postgres", user=os.getenv('PI_DB_USER'), password=os.getenv('PI_DB_PASSWORD'), host=os.getenv('PI_DB_HOST'), port=os.getenv('PI_DB_PORT'))
+        conn.autocommit = True
+        cursor = conn.cursor()
+        
+        # Safely query the database size
+        cursor.execute(sql.SQL("SELECT pg_size_pretty(pg_database_size({db_name}))").format(db_name=sql.Literal(db_request.db_name)))
+        size = cursor.fetchone()[0]
+        cursor.close()
+
+        return Response({"size": size}, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({"error": f"Failed to get database size: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    finally:
+        if conn:
+            conn.close()
+
+
+@api_view(['POST']) # Changed to POST to accept the password
+@permission_classes([IsAuthenticatedUser])
+def list_database_tables(request, request_id):
+    user_id = request.headers.get('X-User-Id')
+    password = request.data.get('password')
+
+    if not password:
+        return Response({"error": "Password is required to connect."}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        db_request = DatabaseRequest.objects.get(id=request_id, student_id=user_id)
+    except DatabaseRequest.DoesNotExist:
+        return Response({"error": "Request not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    conn = None
+    try:
+        # Securely connect AS THE USER using the password they provided
+        conn = psycopg2.connect(
+            dbname=db_request.db_name,
+            user=db_request.db_user,
+            password=password,
+            host=os.getenv('PI_DB_HOST'),
+            port=os.getenv('PI_DB_PORT')
+        )
+        conn.autocommit = True
+        cursor = conn.cursor()
+        query = "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname != 'pg_catalog' AND schemaname != 'information_schema';"
+        cursor.execute(query)
+        tables = [row[0] for row in cursor.fetchall()]
+        cursor.close()
+        return Response({"tables": tables}, status=status.HTTP_200_OK)
+    except psycopg2.OperationalError:
+        return Response({"error": "Authentication failed. Please check your password."}, status=status.HTTP_403_FORBIDDEN)
+    except Exception as e:
+        return Response({"error": f"Failed to list tables: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     finally:
         if conn:
             conn.close()

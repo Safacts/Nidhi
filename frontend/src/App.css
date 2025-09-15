@@ -1,4 +1,4 @@
-/* --- frontend/src/App.css --- FINAL VERSION --- */
+/* --- frontend/src/App.css --- FINAL V1.1 --- */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
 
 :root {
@@ -37,7 +37,7 @@ body {
   transition: var(--ease);
 }
 .App { max-width: 900px; margin: 40px auto; padding: 20px; }
-h1, h2 { color: var(--teal); font-weight: 700; margin-top: 0; }
+h1, h2, h3, h4 { color: var(--teal); font-weight: 700; margin-top: 0; }
 a { color: var(--teal); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
@@ -96,13 +96,13 @@ button:disabled { background-color: #555; cursor: not-allowed; }
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 body.dark-mode .dashboard-section { box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); }
-.request-list, .pending-list { list-style-type: none; padding: 0; margin: 0; }
-.request-item, .pending-item {
+.pending-list { list-style-type: none; padding: 0; margin: 0; }
+.pending-item {
   display: flex; justify-content: space-between; align-items: center;
   padding: 15px; border-bottom: 1px solid var(--border-color);
   transition: var(--ease);
 }
-.request-item:last-child, .pending-item:last-child { border-bottom: none; }
+.pending-item:last-child { border-bottom: none; }
 .status {
   margin-left: 15px; padding: 5px 10px; border-radius: 12px;
   font-size: 12px; font-weight: 500; text-transform: capitalize;
@@ -112,6 +112,19 @@ body.dark-mode .dashboard-section { box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); }
 .status-approved { background-color: var(--success); }
 .status-rejected, .status-error { background-color: var(--error); }
 .approve-button { width: auto; padding: 8px 15px; font-size: 14px; }
+.database-card-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 20px; }
+.database-card { background-color: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 8px; display: flex; flex-direction: column; transition: var(--ease); }
+.card-header { display: flex; justify-content: space-between; align-items: center; padding: 15px; border-bottom: 1px solid var(--border-color); }
+.card-header h3 { margin: 0; }
+.card-body { padding: 15px; flex-grow: 1; }
+.card-body p { margin: 8px 0; font-size: 14px; }
+.card-actions { display: flex; flex-wrap: wrap; gap: 10px; padding: 15px; border-top: 1px solid var(--border-color); }
+.card-actions button { width: auto; flex-grow: 1; padding: 8px; font-size: 14px; }
+.action-button-secondary { background-color: transparent; border: 1px solid var(--text-secondary); color: var(--text-secondary); }
+.action-button-danger { background-color: var(--error); color: #fff; }
+.modal-actions { display: flex; gap: 10px; margin-top: 20px; }
+.inline-button { all: unset; cursor: pointer; color: var(--teal); text-decoration: underline; margin-left: 5px; font-size: 12px; }
+.table-list { list-style-type: disc; padding-left: 20px; }
 
 /* --- Reusable Components (Modal, Notification) --- */
 .credentials-modal {
@@ -143,121 +156,46 @@ body.dark-mode .dashboard-section { box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); }
   100% { opacity: 0; transform: translateY(-20px); }
 }
 
+/* --- ADD THIS TO THE END OF App.css --- */
+/* --- REPLACE THE OLD SIGNATURE STYLES IN App.css WITH THIS --- */
+/* --- REPLACE THE FEATHER STYLES IN App.css WITH THIS --- */
 
-/* --- ADD THESE STYLES TO THE END OF App.css --- */
-
-.database-card-container {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 20px;
-}
-
-.database-card {
-  background-color: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
+/* --- YOUR SIGNATURE STYLES --- */
+.signature {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  font-family: 'Great Vibes', cursive;
+  font-size: 18px;
   display: flex;
-  flex-direction: column;
-  transition: var(--ease);
-}
-
-.card-header {
-  display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 15px;
-  border-bottom: 1px solid var(--border-color);
-}
-.card-header h3 { margin: 0; }
-
-.card-body {
-  padding: 15px;
-  flex-grow: 1;
-}
-.card-body p { margin: 5px 0; }
-
-.card-actions {
-  display: flex;
-  gap: 10px;
-  padding: 15px;
-  border-top: 1px solid var(--border-color);
-}
-.card-actions button {
-  width: 100%;
-  padding: 8px;
-  font-size: 14px;
+  color: transparent;
+  z-index: 500;
+  background-image: linear-gradient(
+    45deg,
+    #1eb980, #17bebb, #4099ff, #7a5fff, #f758c2, #ff6f91, #fecd1a
+  );
+  background-size: 300% 300%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: colorShift 6s infinite alternate;
 }
 
-.action-button-secondary {
-  background-color: transparent;
-  border: 1px solid var(--text-secondary);
-  color: var(--text-secondary);
-}
-.action-button-danger {
-  background-color: var(--error);
-  color: #fff;
+.feather {
+  width: 28px;
+  height: 28px;
+  margin-left: 10px;
+  animation: float 4s ease-in-out infinite;
+  transform-origin: bottom right;
 }
 
-.modal-actions {
-  display: flex;
-  gap: 10px;
-  margin-top: 20px;
-}/* --- ADD THESE STYLES TO THE END OF App.css --- */
-
-.database-card-container {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 20px;
+@keyframes colorShift {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 100% 50%; }
 }
 
-.database-card {
-  background-color: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  display: flex;
-  flex-direction: column;
-  transition: var(--ease);
-}
-
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 15px;
-  border-bottom: 1px solid var(--border-color);
-}
-.card-header h3 { margin: 0; }
-
-.card-body {
-  padding: 15px;
-  flex-grow: 1;
-}
-.card-body p { margin: 5px 0; }
-
-.card-actions {
-  display: flex;
-  gap: 10px;
-  padding: 15px;
-  border-top: 1px solid var(--border-color);
-}
-.card-actions button {
-  width: 100%;
-  padding: 8px;
-  font-size: 14px;
-}
-
-.action-button-secondary {
-  background-color: transparent;
-  border: 1px solid var(--text-secondary);
-  color: var(--text-secondary);
-}
-.action-button-danger {
-  background-color: var(--error);
-  color: #fff;
-}
-
-.modal-actions {
-  display: flex;
-  gap: 10px;
-  margin-top: 20px;
+@keyframes float {
+  0% { transform: translateY(0) rotate(-5deg); }
+  50% { transform: translateY(-5px) rotate(8deg); }
+  100% { transform: translateY(0) rotate(-5deg); }
 }

@@ -15,4 +15,7 @@ urlpatterns = [
     path('requests/reveal/<uuid:request_id>/', views.reveal_credentials, name='reveal_credentials'),
     path('requests/delete/<uuid:request_id>/', views.delete_database, name='delete_database'),
     path('requests/change-password/<uuid:request_id>/', views.change_password, name='change_password'),
+     # --- ADD THESE TWO LINES ---
+    path('requests/size/<uuid:request_id>/', views.get_database_size, name='get_database_size'),
+    path('requests/tables/<uuid:request_id>/', views.list_database_tables, name='list_database_tables'),
 ]

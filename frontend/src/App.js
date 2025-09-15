@@ -1,4 +1,4 @@
-// frontend/src/App.js --- FINAL FEATURE-COMPLETE VERSION ---
+// frontend/src/App.js --- FINAL FEATURE-COMPLETE V1.1 ---
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import './App.css';
@@ -62,6 +62,64 @@ function App() {
           )}
         </>
       )}
+
+    
+      <a href="https://aadisheshu.onrender.com/" target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+        <div className="signature">
+          Made with 💖 by Aadi
+          <svg className="feather" viewBox="0 0 100 250" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              {/* This gradient uses YOUR color palette for the main feather body */}
+              <linearGradient id="userGradient" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stopColor="#1eb980"/>
+                  <stop offset="25%" stopColor="#17bebb"/>
+                  <stop offset="50%" stopColor="#4099ff"/>
+                  <stop offset="75%" stopColor="#7a5fff"/>
+                  <stop offset="100%" stopColor="#f758c2"/>
+              </linearGradient>
+
+              {/* This gradient uses the end of YOUR palette for the eye */}
+              <radialGradient id="eyeGradient" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stopColor="#fecd1a" />
+                <stop offset="100%" stopColor="#f758c2" />
+              </radialGradient>
+            </defs>
+
+            {/* Main feather shape, filled with your primary gradient */}
+            <path
+              d="M50 250 Q 0 150, 50 0 Q 100 150, 50 250 Z"
+              fill="url(#userGradient)"
+            />
+            
+            {/* The "Eye" of the feather, layered */}
+            <path
+              d="M50 90 C 20 60, 80 60, 50 90 Z"
+              fill="url(#eyeGradient)"
+            />
+            <path
+              d="M50 85 C 30 58, 70 58, 50 85 Z"
+              fill="#4099ff" /* Using the blue from your palette */
+            />
+            <path
+              d="M50 78 C 40 58, 60 58, 50 78 Z"
+              fill="#000000"
+              opacity="0.5"
+            />
+            
+            {/* Central Stem (Rachis) */}
+            <path
+              d="M50 250 L 50 60"
+              stroke="var(--bg-secondary)"
+              strokeWidth="1.5"
+              fill="none"
+              opacity="0.6"
+            />
+          </svg>
+        </div>
+      </a>
+
+      {/* --- END OF SIGNATURE --- */}
+
     </div>
   );
 }
@@ -132,6 +190,60 @@ const ChangePasswordModal = ({ request, onConfirm, onCancel }) => {
   );
 };
 
+const ViewTablesModal = ({ request, onCancel, showNotification }) => {
+  const [password, setPassword] = useState('');
+  const [tables, setTables] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const getHeaders = useCallback(() => ({
+    'X-User-Id': request.student_id,
+    'X-User-Role': 'student', // Use a generic role for this action
+    'X-User-College-Id': request.college_id
+  }), [request]);
+
+  const handleFetchTables = async () => {
+    setLoading(true);
+    try {
+      const response = await apiClient.post(`/requests/tables/${request.id}/`, { password }, { headers: getHeaders() });
+      setTables(response.data.tables);
+    } catch (error) {
+      showNotification(error.response?.data?.error || "Failed to connect.");
+      setTables(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="credentials-modal">
+      <div className="credentials-content">
+        <h2>View Tables in '{request.db_name}'</h2>
+        {!tables ? (
+          <>
+            <p>Please enter the password for user <strong>{request.db_user}</strong> to connect.</p>
+            <div className="form-group">
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            </div>
+            <div className="modal-actions">
+              <button onClick={onCancel} className="action-button-secondary">Cancel</button>
+              <button onClick={handleFetchTables} disabled={!password || loading}>{loading ? 'Connecting...' : 'Fetch Tables'}</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <h4>Tables Found:</h4>
+            <ul className="table-list">
+              {tables.length === 0 && <li>No user-created tables found.</li>}
+              {tables.map(table => <li key={table}>{table}</li>)}
+            </ul>
+            <button onClick={onCancel}>Close</button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const Login = ({ onLogin, showNotification }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -172,6 +284,7 @@ const StudentDashboard = ({ user, showNotification }) => {
   const [selectedRequest, setSelectedRequest] = useState(null);
   const [isDeleteModalOpen, setDeleteModalOpen] = useState(false);
   const [isChangePassModalOpen, setChangePassModalOpen] = useState(false);
+  const [isViewTablesModalOpen, setViewTablesModalOpen] = useState(false);
 
   const getHeaders = useCallback(() => ({
     'X-User-Id': user.id, 'X-User-Name': user.username,
@@ -195,7 +308,7 @@ const StudentDashboard = ({ user, showNotification }) => {
       setDbName('');
       showNotification('Request submitted successfully!', 'success');
       fetchRequests();
-    } catch (error) { showNotification('Failed to create request. Is the name already taken?'); } finally { setLoading(false); }
+    } catch (error) { showNotification(error.response?.data?.error || 'Failed to create request.'); } finally { setLoading(false); }
   };
 
   const handleReveal = async (requestId) => {
@@ -226,6 +339,13 @@ const StudentDashboard = ({ user, showNotification }) => {
       setSelectedRequest(null);
     } catch (error) { showNotification(error.response?.data?.error || 'Failed to change password.'); }
   };
+  
+  const handleGetSize = async (req) => {
+    try {
+      const response = await apiClient.get(`/requests/size/${req.id}/`, { headers: getHeaders() });
+      setRequests(currentRequests => currentRequests.map(r => r.id === req.id ? { ...r, size: response.data.size } : r));
+    } catch (error) { showNotification('Failed to get database size.'); }
+  };
 
   return (
     <>
@@ -237,29 +357,26 @@ const StudentDashboard = ({ user, showNotification }) => {
         </form>
       </div>
       <div className="dashboard-section">
-        <h2>My Databases</h2>
+        <h2>My Databases <small>({requests.length}/5 Used)</small></h2>
         <div className="database-card-container">
           {requests.length === 0 && <p>You have no active or pending database requests.</p>}
           {requests.map(req => (
             <div key={req.id} className="database-card">
-              <div className="card-header">
-                <h3>{req.db_name}</h3>
-                <span className={`status status-${req.status}`}>{req.status}</span>
-              </div>
+              <div className="card-header"><h3>{req.db_name}</h3><span className={`status status-${req.status}`}>{req.status}</span></div>
               {req.status === 'approved' && (
                 <div className="card-body">
                   <h4>Connection Info</h4>
                   <p><strong>Host:</strong> localhost</p>
                   <p><strong>Port:</strong> 5435</p>
                   <p><strong>Username:</strong> {req.db_user}</p>
+                  <p><strong>Size:</strong> {req.size || 'N/A'} <button onClick={() => handleGetSize(req)} className="inline-button">Check</button></p>
                 </div>
               )}
               <div className="card-actions">
-                {req.status === 'approved' && req.db_password_temp !== null && (
-                  <button onClick={() => handleReveal(req.id)}>View Password</button>
-                )}
+                {req.status === 'approved' && req.db_password_temp !== null && (<button onClick={() => handleReveal(req.id)}>View Password</button>)}
                 {req.status === 'approved' && (
                   <>
+                    <button onClick={() => { setSelectedRequest(req); setViewTablesModalOpen(true); }} className="action-button-secondary">View Tables</button>
                     <button onClick={() => { setSelectedRequest(req); setChangePassModalOpen(true); }} className="action-button-secondary">Change Password</button>
                     <button onClick={() => { setSelectedRequest(req); setDeleteModalOpen(true); }} className="action-button-danger">Delete</button>
                   </>
@@ -272,6 +389,7 @@ const StudentDashboard = ({ user, showNotification }) => {
       {revealedCreds && <CredentialsModal credentials={revealedCreds} onClose={() => setRevealedCreds(null)} />}
       {isDeleteModalOpen && <DeleteConfirmationModal request={selectedRequest} onConfirm={handleDeleteRequest} onCancel={() => setDeleteModalOpen(false)} />}
       {isChangePassModalOpen && <ChangePasswordModal request={selectedRequest} onConfirm={handleChangePassword} onCancel={() => setChangePassModalOpen(false)} />}
+      {isViewTablesModalOpen && <ViewTablesModal request={selectedRequest} onCancel={() => setViewTablesModalOpen(false)} showNotification={showNotification} />}
     </>
   );
 };
@@ -314,6 +432,7 @@ const AdminDashboard = ({ user, showNotification }) => {
         ))}
       </ul>
     </div>
+    
   );
 };
 
