@@ -84,17 +84,30 @@ WSGI_APPLICATION = 'nidhi_backend.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': os.getenv('DATABASE_NAME'),
+#         'USER': os.getenv('DATABASE_USER'),
+#         'PASSWORD': os.getenv('DATABASE_PASSWORD'),
+#         'HOST': os.getenv('DATABASE_HOST'),
+#         'PORT': os.getenv('DATABASE_PORT'),
+#     }
+# }
+
+
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv('DATABASE_NAME'),
-        'USER': os.getenv('DATABASE_USER'),
-        'PASSWORD': os.getenv('DATABASE_PASSWORD'),
-        'HOST': os.getenv('DATABASE_HOST'),
-        'PORT': os.getenv('DATABASE_PORT'),
+        # ✅ CHANGE THESE LINES to match your .env file
+        'NAME': os.getenv('NIDHI_DB_NAME'),
+        'USER': os.getenv('NIDHI_DB_USER'),
+        'PASSWORD': os.getenv('NIDHI_DB_PASSWORD'),
+        'HOST': os.getenv('DATABASE_HOST'), # This one is correct
+        'PORT': '5432', # It's better to keep the port hardcoded for Docker
     }
 }
-
 
 # Password validation
 # https://docs.djangoproject.com/en/4.2/ref/settings/#auth-password-validators
