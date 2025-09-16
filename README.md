@@ -94,9 +94,14 @@ Nidhi is designed to be deployed as part of the unified architecture detailed in
 
 ---
 
-## **6. 📞 Contact**
+## **6. 📜 License**
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+
+
+## **7. 📞 Contact**
 
 This project was designed and built by **Aadi**. For questions, feature requests, or collaboration, please feel free to reach out.
 
 -   **GitHub Issues:** For any bugs or technical issues, please open an issue in this repository.
--   **LinkedIn:** [Your LinkedIn Profile URL]
+-   **LinkedIn:** [www.linkedin.com/in/aadisheshu-konga]
