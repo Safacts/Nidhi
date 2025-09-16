@@ -9,3 +9,31 @@ backend/.env
 
 # Django DB file
 backend/db.sqlite3
+
+# /Nidhi/.gitignore - FINAL VERSION
+
+# --- Node.js / React ---
+# CRITICAL: This is the most important rule.
+node_modules/
+frontend/build/
+.pnp
+.pnp.js
+
+# --- Python / Django ---
+__pycache__/
+*.pyc
+venv/
+env/
+.venv/
+
+# --- Environment Files ---
+# Also critical for security.
+.env
+.env.*
+!.env.example
+
+# --- IDE / OS Files ---
+.idea/
+.vscode/
+.DS_Store
+*.swp
