@@ -21,3 +21,9 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Add these to the end of the root .gitignore
+
+# Exclude top-level Node.js files to prevent accidental commits
+/package.json
+/package-lock.json
