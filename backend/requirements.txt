@@ -7,3 +7,4 @@ python-dotenv
 requests
 django-cors-headers
 gunicorn  # <-- ADD THIS LINE
+PyJWT
