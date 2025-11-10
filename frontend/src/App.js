@@ -1,28 +1,61 @@
-// frontend/src/App.js --- FINAL, UNIFIED PRODUCTION VERSION V1.2 ---
+// FILE: ~/services/nidhi/frontend/src/App.js
+// FINAL CORRECTED VERSION
+
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { jwtDecode } from 'jwt-decode'; // <-- ADD THIS IMPORT
 import './App.css';
 import logo from './logo.png';
 
-// --- PRODUCTION API CLIENTS ---
-// This client talks to the Nidhi-specific API endpoints, routed by Nginx at /nidhi/api/
-const NIDHI_API_URL = '/nidhi/api';
-const nidhiApiClient = axios.create({ baseURL: NIDHI_API_URL });
+// --- CORRECTED API CLIENTS ---
+// This client talks to the Nidhi-specific API endpoints
+const nidhiApiClient = axios.create({
+  baseURL: '/nidhi/api',
+});
 
-// This client talks to the shared Jnwn Login API, routed by Nginx at /api/
-const AUTH_API_URL = '/api';
-const authApiClient = axios.create({ baseURL: AUTH_API_URL });
+// This client talks ONLY to the Aacharya login endpoint
+const authApiClient = axios.create({
+  baseURL: '/aacharya/api/v1', // <-- CORRECTED BASE URL
+});
+
+// --- THE MOST IMPORTANT FIX: An Axios Interceptor ---
+// This function automatically adds the required headers to EVERY API call made with nidhiApiClient.
+nidhiApiClient.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('nidhi_token');
+    if (token) {
+      try {
+        const decodedToken = jwtDecode(token);
+        config.headers['Authorization'] = `Bearer ${token}`;
+        config.headers['X-User-Id'] = decodedToken.user_id; // JWT standard uses user_id
+        config.headers['X-User-Name'] = decodedToken.username;
+        config.headers['X-User-Role'] = decodedToken.role;
+        config.headers['X-User-College-Id'] = decodedToken.subdomain;
+      } catch (error) {
+        console.error("Error decoding token:", error);
+      }
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
 
 function App() {
   const [user, setUser] = useState(null);
-  const [token, setToken] = useState(localStorage.getItem('nidhi_token'));
+  // No need for a separate token state, it's all in localStorage now
+  const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('nidhi_token'));
   const [theme, setTheme] = useState(localStorage.getItem('nidhi_theme') || 'light');
   const [notification, setNotification] = useState({ message: '', type: '' });
 
   useEffect(() => {
     const storedUser = localStorage.getItem('nidhi_user');
-    if (storedUser && token) setUser(JSON.parse(storedUser));
-  }, [token]);
+    if (storedUser && isLoggedIn) {
+      setUser(JSON.parse(storedUser));
+    }
+  }, [isLoggedIn]);
 
   useEffect(() => {
     document.body.className = `${theme}-mode`;
@@ -38,16 +71,17 @@ function App() {
 
   const handleLogin = (userData, tokenData) => {
     setUser(userData);
-    setToken(tokenData.access);
+    setIsLoggedIn(true);
     localStorage.setItem('nidhi_user', JSON.stringify(userData));
     localStorage.setItem('nidhi_token', tokenData.access);
   };
 
   const handleLogout = () => {
     setUser(null);
-    setToken(null);
-    localStorage.clear();
-    setTheme(localStorage.getItem('nidhi_theme') || 'light');
+    setIsLoggedIn(false);
+    localStorage.removeItem('nidhi_user');
+    localStorage.removeItem('nidhi_token');
+    // Keep theme preference
   };
 
   return (
@@ -56,18 +90,19 @@ function App() {
         {theme === 'light' ? '🌙' : '☀️'}
       </div>
       <Notification notification={notification} />
-      {!user ? (
+      {!isLoggedIn || !user ? (
         <Login onLogin={handleLogin} showNotification={showNotification} />
       ) : (
         <>
           <DashboardHeader user={user} onLogout={handleLogout} />
-          {user.role === 'admin' || user.role === 'superuser' ? (
+          {user.role === 'admin' || user.role === 'super_admin' ? (
             <AdminDashboard user={user} showNotification={showNotification} />
           ) : (
             <StudentDashboard user={user} showNotification={showNotification} />
           )}
         </>
       )}
+      {/* Signature remains the same */}
       <a href="https://aadisheshu.onrender.com/" target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
         <div className="signature">
           Made with 💖 by Aadi
@@ -88,6 +123,208 @@ function App() {
   );
 }
 
+// Login Component with corrected API call logic
+const Login = ({ onLogin, showNotification }) => {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      // Step 1: Make ONE call to the correct token endpoint
+      const tokenResponse = await authApiClient.post('/token/', { username, password });
+      const tokens = tokenResponse.data;
+      const accessToken = tokens.access;
+
+      // Step 2: Decode the token to get user details
+      const decodedToken = jwtDecode(accessToken);
+      
+      // Step 3: Construct the user object from the token's data
+      const userProfile = {
+        id: decodedToken.user_id,
+        username: decodedToken.username,
+        email: decodedToken.email,
+        role: decodedToken.role,
+        college_id: decodedToken.subdomain, // Map subdomain to college_id
+      };
+
+      // Step 4: Call the main onLogin function with the correct data
+      onLogin(userProfile, tokens);
+
+    } catch (err) {
+      showNotification('Login failed. Please check your credentials or account status.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="login-container">
+      <img src={logo} alt="Nidhi Logo" className="login-logo" />
+      <h2>Treasure Your Data, Effortlessly.</h2>
+      <form onSubmit={handleSubmit}>
+        <div className="form-group"><label>Email or Roll Number</label><input type="text" value={username} onChange={(e) => setUsername(e.target.value)} required /></div>
+        <div className="form-group"><label>Password</label><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required /></div>
+        <div className="form-links"><a href="https://jnwn.xyz:8000/aacharya/college/password-reset/" target="_blank" rel="noopener noreferrer">Forgot Password?</a></div>
+        <button type="submit" disabled={loading}>{loading ? 'Logging in...' : 'Login'}</button>
+      </form>
+    </div>
+  );
+};
+
+
+// --- All other components remain the same, but no longer need getHeaders ---
+const StudentDashboard = ({ showNotification }) => {
+  // ... (state declarations are the same)
+  const [requests, setRequests] = useState([]);
+  const [dbName, setDbName] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [revealedCreds, setRevealedCreds] = useState(null);
+  const [selectedRequest, setSelectedRequest] = useState(null);
+  const [isDeleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [isChangePassModalOpen, setChangePassModalOpen] = useState(false);
+  const [isViewTablesModalOpen, setViewTablesModalOpen] = useState(false);
+
+  // We no longer need getHeaders here, the interceptor handles it!
+  const fetchRequests = useCallback(async () => {
+    try {
+      // The headers are now added automatically by the interceptor
+      const response = await nidhiApiClient.get('/requests/my/');
+      setRequests(response.data);
+    } catch (error) { showNotification('Could not fetch your requests.'); }
+  }, [showNotification]);
+
+  useEffect(() => { fetchRequests(); }, [fetchRequests]);
+
+  const handleRequestSubmit = async (e) => {
+    e.preventDefault(); setLoading(true);
+    try {
+      await nidhiApiClient.post('/requests/create/', { db_name: dbName });
+      setDbName(''); showNotification('Request submitted successfully!', 'success'); fetchRequests();
+    } catch (error) { showNotification(error.response?.data?.error || 'Failed to create request.'); } finally { setLoading(false); }
+  };
+
+  const handleReveal = async (requestId) => {
+    try {
+      const response = await nidhiApiClient.post(`/requests/reveal/${requestId}/`);
+      setRevealedCreds(response.data); fetchRequests();
+    } catch (error) { showNotification('Credentials have already been viewed and were deleted.'); }
+  };
+
+  const handleDeleteRequest = async () => {
+    if (!selectedRequest) return;
+    try {
+      await nidhiApiClient.post(`/requests/delete/${selectedRequest.id}/`);
+      showNotification(`Database '${selectedRequest.db_name}' deleted successfully!`, 'success');
+      fetchRequests(); setDeleteModalOpen(false); setSelectedRequest(null);
+    } catch (error) { showNotification('Failed to delete database.'); }
+  };
+
+  const handleChangePassword = async (newPassword) => {
+    if (!selectedRequest) return;
+    try {
+      await nidhiApiClient.post(`/requests/change-password/${selectedRequest.id}/`, { password: newPassword });
+      showNotification('Password changed successfully!', 'success');
+      setChangePassModalOpen(false); setSelectedRequest(null);
+    } catch (error) { showNotification(error.response?.data?.error || 'Failed to change password.'); }
+  };
+  
+  const handleGetSize = async (req) => {
+    try {
+      const response = await nidhiApiClient.get(`/requests/size/${req.id}/`);
+      setRequests(currentRequests => currentRequests.map(r => r.id === req.id ? { ...r, size: response.data.size } : r));
+    } catch (error) { showNotification('Failed to get database size.'); }
+  };
+
+  // The JSX for StudentDashboard remains exactly the same
+  return (
+    <>
+      <div className="dashboard-section">
+        <h2>Request a New Database</h2>
+        <form onSubmit={handleRequestSubmit}>
+          <div className="form-group"><label>New Database Name (e.g., my-project-name)</label><input type="text" value={dbName} onChange={(e) => setDbName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))} required /></div>
+          <button type="submit" disabled={loading}>{loading ? 'Requesting...' : 'Submit Request'}</button>
+        </form>
+      </div>
+      <div className="dashboard-section">
+        <h2>My Databases <small>({requests.length}/5 Used)</small></h2>
+        <div className="database-card-container">
+          {requests.length === 0 && <p>You have no active or pending database requests.</p>}
+          {requests.map(req => (
+            <div key={req.id} className="database-card">
+              <div className="card-header"><h3>{req.db_name}</h3><span className={`status status-${req.status}`}>{req.status}</span></div>
+              {req.status === 'approved' && (
+                <div className="card-body">
+                  <h4>Connection Info</h4>
+                  <p><strong>Host:</strong> jnwn.xyz</p>
+                  <p><strong>Port:</strong> 5435</p>
+                  <p><strong>Username:</strong> {req.db_user}</p>
+                  <p><strong>Size:</strong> {req.size || 'N/A'} <button onClick={() => handleGetSize(req)} className="inline-button">Check</button></p>
+                </div>
+              )}
+              <div className="card-actions">
+                {req.status === 'approved' && req.db_password_temp !== null && (<button onClick={() => handleReveal(req.id)}>View Password</button>)}
+                {req.status === 'approved' && (
+                  <>
+                    <button onClick={() => { setSelectedRequest(req); setViewTablesModalOpen(true); }} className="action-button-secondary">View Tables</button>
+                    <button onClick={() => { setSelectedRequest(req); setChangePassModalOpen(true); }} className="action-button-secondary">Change Password</button>
+                    <button onClick={() => { setSelectedRequest(req); setDeleteModalOpen(true); }} className="action-button-danger">Delete</button>
+                  </>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      {revealedCreds && <CredentialsModal credentials={revealedCreds} onClose={() => setRevealedCreds(null)} />}
+      {isDeleteModalOpen && <DeleteConfirmationModal request={selectedRequest} onConfirm={handleDeleteRequest} onCancel={() => setDeleteModalOpen(false)} />}
+      {isChangePassModalOpen && <ChangePasswordModal request={selectedRequest} onConfirm={handleChangePassword} onCancel={() => setChangePassModalOpen(false)} />}
+      {isViewTablesModalOpen && <ViewTablesModal request={selectedRequest} onCancel={() => setViewTablesModalOpen(false)} showNotification={showNotification} />}
+    </>
+  );
+};
+
+
+const AdminDashboard = ({ showNotification }) => {
+  const [pendingRequests, setPendingRequests] = useState([]);
+  // No longer need getHeaders
+  const fetchPending = useCallback(async () => {
+    try {
+      const response = await nidhiApiClient.get('/admin/requests/pending/');
+      setPendingRequests(response.data);
+    } catch (error) { showNotification('Could not fetch pending requests.'); }
+  }, [showNotification]);
+
+  useEffect(() => { fetchPending(); }, [fetchPending]);
+
+  const handleApprove = async (requestId) => {
+    try {
+      await nidhiApiClient.post(`/admin/requests/approve/${requestId}/`);
+      showNotification('Request approved successfully!', 'success');
+      fetchPending();
+    } catch (error) { showNotification('Failed to approve request.'); }
+  };
+  // JSX for AdminDashboard remains the same
+  return (
+    <div className="dashboard-section">
+      <h2>Pending Approval Requests</h2>
+      <ul className="pending-list">
+        {pendingRequests.length === 0 && <li>No pending requests.</li>}
+        {pendingRequests.map(req => (
+          <li key={req.id} className="pending-item">
+            <div><strong>{req.db_name}</strong><br /><small>Requested by: {req.student_username}</small></div>
+            <button onClick={() => handleApprove(req.id)} className="approve-button">Approve</button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+};
+
+
+// All other small components (modals, etc.) are fine and don't need changes.
 const Notification = ({ notification }) => {
   if (!notification.message) return null;
   return <div className={`notification ${notification.type}`}>{notification.message}</div>;
@@ -159,14 +396,11 @@ const ViewTablesModal = ({ request, onCancel, showNotification }) => {
   const [tables, setTables] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  const getHeaders = useCallback(() => ({
-    'X-User-Id': request.student_id, 'X-User-Role': 'student', 'X-User-College-Id': request.college_id
-  }), [request]);
-
   const handleFetchTables = async () => {
     setLoading(true);
     try {
-      const response = await nidhiApiClient.post(`/requests/tables/${request.id}/`, { password }, { headers: getHeaders() });
+      // The interceptor will add the necessary headers automatically
+      const response = await nidhiApiClient.post(`/requests/tables/${request.id}/`, { password });
       setTables(response.data.tables);
     } catch (error) {
       showNotification(error.response?.data?.error || "Failed to connect.");
@@ -198,194 +432,6 @@ const ViewTablesModal = ({ request, onCancel, showNotification }) => {
           </>
         )}
       </div>
-    </div>
-  );
-};
-
-const Login = ({ onLogin, showNotification }) => {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      const tokenResponse = await authApiClient.post('/users/token/', { username, password });
-      const accessToken = tokenResponse.data.access;
-      const profileResponse = await authApiClient.get('/users/profile/', {
-        headers: { 'Authorization': `Bearer ${accessToken}` }
-      });
-      onLogin(profileResponse.data, tokenResponse.data);
-    } catch (err) {
-      showNotification('Login failed. Please check your credentials or account status.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="login-container">
-      <img src={logo} alt="Nidhi Logo" className="login-logo" />
-      <h2>Treasure Your Data, Effortlessly.</h2>
-      <form onSubmit={handleSubmit}>
-        <div className="form-group"><label>Email or Roll Number</label><input type="text" value={username} onChange={(e) => setUsername(e.target.value)} required /></div>
-        <div className="form-group"><label>Password</label><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required /></div>
-        <div className="form-links"><a href="https://sunbeam-smiling-trout.ngrok-free.app/college/password_reset/" target="_blank" rel="noopener noreferrer">Forgot Password?</a></div>
-        <button type="submit" disabled={loading}>{loading ? 'Logging in...' : 'Login'}</button>
-      </form>
-    </div>
-  );
-};
-
-const StudentDashboard = ({ user, showNotification }) => {
-  const [requests, setRequests] = useState([]);
-  const [dbName, setDbName] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [revealedCreds, setRevealedCreds] = useState(null);
-  const [selectedRequest, setSelectedRequest] = useState(null);
-  const [isDeleteModalOpen, setDeleteModalOpen] = useState(false);
-  const [isChangePassModalOpen, setChangePassModalOpen] = useState(false);
-  const [isViewTablesModalOpen, setViewTablesModalOpen] = useState(false);
-
-  const getHeaders = useCallback(() => ({
-    'X-User-Id': user.id, 'X-User-Name': user.username,
-    'X-User-Role': user.role, 'X-User-College-Id': user.college_id
-  }), [user]);
-
-  const fetchRequests = useCallback(async () => {
-    try {
-      const response = await nidhiApiClient.get('/requests/my/', { headers: getHeaders() });
-      setRequests(response.data);
-    } catch (error) { showNotification('Could not fetch your requests.'); }
-  }, [getHeaders, showNotification]);
-
-  useEffect(() => { fetchRequests(); }, [fetchRequests]);
-
-  const handleRequestSubmit = async (e) => {
-    e.preventDefault(); setLoading(true);
-    try {
-      await nidhiApiClient.post('/requests/create/', { db_name: dbName }, { headers: getHeaders() });
-      setDbName(''); showNotification('Request submitted successfully!', 'success'); fetchRequests();
-    } catch (error) { showNotification(error.response?.data?.error || 'Failed to create request.'); } finally { setLoading(false); }
-  };
-
-  const handleReveal = async (requestId) => {
-    try {
-      const response = await nidhiApiClient.post(`/requests/reveal/${requestId}/`, {}, { headers: getHeaders() });
-      setRevealedCreds(response.data); fetchRequests();
-    } catch (error) { showNotification('Credentials have already been viewed and were deleted.'); }
-  };
-
-  const handleDeleteRequest = async () => {
-    if (!selectedRequest) return;
-    try {
-      await nidhiApiClient.post(`/requests/delete/${selectedRequest.id}/`, {}, { headers: getHeaders() });
-      showNotification(`Database '${selectedRequest.db_name}' deleted successfully!`, 'success');
-      fetchRequests(); setDeleteModalOpen(false); setSelectedRequest(null);
-    } catch (error) { showNotification('Failed to delete database.'); }
-  };
-
-  const handleChangePassword = async (newPassword) => {
-    if (!selectedRequest) return;
-    try {
-      await nidhiApiClient.post(`/requests/change-password/${selectedRequest.id}/`, { password: newPassword }, { headers: getHeaders() });
-      showNotification('Password changed successfully!', 'success');
-      setChangePassModalOpen(false); setSelectedRequest(null);
-    } catch (error) { showNotification(error.response?.data?.error || 'Failed to change password.'); }
-  };
-  
-  const handleGetSize = async (req) => {
-    try {
-      const response = await nidhiApiClient.get(`/requests/size/${req.id}/`, { headers: getHeaders() });
-      setRequests(currentRequests => currentRequests.map(r => r.id === req.id ? { ...r, size: response.data.size } : r));
-    } catch (error) { showNotification('Failed to get database size.'); }
-  };
-
-  return (
-    <>
-      <div className="dashboard-section">
-        <h2>Request a New Database</h2>
-        <form onSubmit={handleRequestSubmit}>
-          <div className="form-group"><label>New Database Name (e.g., my-project-name)</label><input type="text" value={dbName} onChange={(e) => setDbName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))} required /></div>
-          <button type="submit" disabled={loading}>{loading ? 'Requesting...' : 'Submit Request'}</button>
-        </form>
-      </div>
-      <div className="dashboard-section">
-        <h2>My Databases <small>({requests.length}/5 Used)</small></h2>
-        <div className="database-card-container">
-          {requests.length === 0 && <p>You have no active or pending database requests.</p>}
-          {requests.map(req => (
-            <div key={req.id} className="database-card">
-              <div className="card-header"><h3>{req.db_name}</h3><span className={`status status-${req.status}`}>{req.status}</span></div>
-              {req.status === 'approved' && (
-                <div className="card-body">
-                  <h4>Connection Info</h4>
-                  <p><strong>Host:</strong> localhost</p>
-                  <p><strong>Port:</strong> 5435</p>
-                  <p><strong>Username:</strong> {req.db_user}</p>
-                  <p><strong>Size:</strong> {req.size || 'N/A'} <button onClick={() => handleGetSize(req)} className="inline-button">Check</button></p>
-                </div>
-              )}
-              <div className="card-actions">
-                {req.status === 'approved' && req.db_password_temp !== null && (<button onClick={() => handleReveal(req.id)}>View Password</button>)}
-                {req.status === 'approved' && (
-                  <>
-                    <button onClick={() => { setSelectedRequest(req); setViewTablesModalOpen(true); }} className="action-button-secondary">View Tables</button>
-                    <button onClick={() => { setSelectedRequest(req); setChangePassModalOpen(true); }} className="action-button-secondary">Change Password</button>
-                    <button onClick={() => { setSelectedRequest(req); setDeleteModalOpen(true); }} className="action-button-danger">Delete</button>
-                  </>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-      {revealedCreds && <CredentialsModal credentials={revealedCreds} onClose={() => setRevealedCreds(null)} />}
-      {isDeleteModalOpen && <DeleteConfirmationModal request={selectedRequest} onConfirm={handleDeleteRequest} onCancel={() => setDeleteModalOpen(false)} />}
-      {isChangePassModalOpen && <ChangePasswordModal request={selectedRequest} onConfirm={handleChangePassword} onCancel={() => setChangePassModalOpen(false)} />}
-      {isViewTablesModalOpen && <ViewTablesModal request={selectedRequest} onCancel={() => setViewTablesModalOpen(false)} showNotification={showNotification} />}
-    </>
-  );
-};
-
-const AdminDashboard = ({ user, showNotification }) => {
-  const [pendingRequests, setPendingRequests] = useState([]);
-
-  const getHeaders = useCallback(() => ({
-    'X-User-Id': user.id, 'X-User-Name': user.username,
-    'X-User-Role': user.role, 'X-User-College-Id': user.college_id
-  }), [user]);
-
-  const fetchPending = useCallback(async () => {
-    try {
-      const response = await nidhiApiClient.get('/admin/requests/pending/', { headers: getHeaders() });
-      setPendingRequests(response.data);
-    } catch (error) { showNotification('Could not fetch pending requests.'); }
-  }, [getHeaders, showNotification]);
-
-  useEffect(() => { fetchPending(); }, [fetchPending]);
-
-  const handleApprove = async (requestId) => {
-    try {
-      await nidhiApiClient.post(`/admin/requests/approve/${requestId}/`, {}, { headers: getHeaders() });
-      showNotification('Request approved successfully!', 'success');
-      fetchPending();
-    } catch (error) { showNotification('Failed to approve request.'); }
-  };
-
-  return (
-    <div className="dashboard-section">
-      <h2>Pending Approval Requests</h2>
-      <ul className="pending-list">
-        {pendingRequests.length === 0 && <li>No pending requests.</li>}
-        {pendingRequests.map(req => (
-          <li key={req.id} className="pending-item">
-            <div><strong>{req.db_name}</strong><br /><small>Requested by: {req.student_username}</small></div>
-            <button onClick={() => handleApprove(req.id)} className="approve-button">Approve</button>
-          </li>
-        ))}
-      </ul>
     </div>
   );
 };
