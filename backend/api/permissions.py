@@ -10,8 +10,8 @@ class IsAdminUser(BasePermission):
         role = request.headers.get('X-User-Role', '').lower()
         return role == 'admin'
 
-class IsAuthenticatedUser(BasePermission):
+class IsAdminUser(BasePermission):
     def has_permission(self, request, view):
         role = request.headers.get('X-User-Role', '').lower()
-        # Now we allow all three valid roles
-        return role in ['student', 'admin', 'faculty']
+        # Now, we accept any of the valid admin roles from Aacharya
+        return role in ['admin', 'college_admin', 'super_admin']
