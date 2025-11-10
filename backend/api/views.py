@@ -14,6 +14,7 @@ from rest_framework import status
 from .models import DatabaseRequest
 from .serializers import DatabaseRequestSerializer
 from .permissions import IsAuthenticatedUser, IsAdminUser
+import jwt
 
 # --- Constants ---
 ATTENDANCE_API_URL = os.getenv("ATTENDANCE_API_URL")
@@ -39,7 +40,38 @@ def create_database_request(request):
         )
     # --- END OF QUOTA CHECK ---
 
-# --- Authentication View ---
+# # --- Authentication View ---
+# @api_view(['POST'])
+# @permission_classes([AllowAny])
+# def login_view(request):
+#     username = request.data.get('username')
+#     password = request.data.get('password')
+
+#     if not username or not password:
+#         return Response({"error": "Username and password are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+#     try:
+#         token_response = requests.post(f"{ATTENDANCE_API_URL}/api/users/token/", json={"username": username, "password": password}, timeout=10)
+#         token_response.raise_for_status()
+#         tokens = token_response.json()
+#     except requests.exceptions.HTTPError:
+#         return Response({"error": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
+#     except requests.exceptions.RequestException as e:
+#         return Response({"error": "Could not connect to authentication service.", "details": str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+#     try:
+#         access_token = tokens.get('access')
+#         headers = {'Authorization': f'Bearer {access_token}'}
+#         profile_response = requests.get(f"{ATTENDANCE_API_URL}/api/users/profile/", headers=headers, timeout=10)
+#         profile_response.raise_for_status()
+#         user_profile = profile_response.json()
+#     except requests.exceptions.RequestException as e:
+#         return Response({"error": "Could not retrieve user profile.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+#     return Response({"tokens": tokens, "user": user_profile}, status=status.HTTP_200_OK)
+
+
+# --- REPLACE THE OLD login_view WITH THIS NEW ONE ---
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def login_view(request):
@@ -49,24 +81,42 @@ def login_view(request):
     if not username or not password:
         return Response({"error": "Username and password are required."}, status=status.HTTP_400_BAD_REQUEST)
 
+    # Step 1: Call Aacharya to get the authentication tokens
     try:
-        token_response = requests.post(f"{ATTENDANCE_API_URL}/api/users/token/", json={"username": username, "password": password}, timeout=10)
-        token_response.raise_for_status()
+        # NOTE: This URL should be the one from your .env file, which is correct now.
+        token_response = requests.post(ATTENDANCE_API_URL, json={"username": username, "password": password}, timeout=10)
+        
+        # Raise an exception for bad status codes (like 401 Unauthorized)
+        token_response.raise_for_status() 
         tokens = token_response.json()
-    except requests.exceptions.HTTPError:
-        return Response({"error": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
-    except requests.exceptions.RequestException as e:
-        return Response({"error": "Could not connect to authentication service.", "details": str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
+    except requests.exceptions.HTTPError:
+        return Response({"error": "Login failed. Please check your credentials or account status."}, status=status.HTTP_401_UNAUTHORIZED)
+    except requests.exceptions.RequestException as e:
+        return Response({"error": "Could not connect to the authentication service.", "details": str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    # Step 2: Decode the access token to get the user details (the new, correct logic)
     try:
         access_token = tokens.get('access')
-        headers = {'Authorization': f'Bearer {access_token}'}
-        profile_response = requests.get(f"{ATTENDANCE_API_URL}/api/users/profile/", headers=headers, timeout=10)
-        profile_response.raise_for_status()
-        user_profile = profile_response.json()
-    except requests.exceptions.RequestException as e:
-        return Response({"error": "Could not retrieve user profile.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        if not access_token:
+            return Response({"error": "Authentication service returned an invalid token."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+        # We don't need to verify the signature because we trust the token coming from our own internal service.
+        decoded_token = jwt.decode(access_token, options={"verify_signature": False})
+
+        # Create the user profile dictionary from the token's contents
+        user_profile = {
+            "username": decoded_token.get("username"),
+            "email": decoded_token.get("email"),
+            "role": decoded_token.get("role"),
+            "subdomain": decoded_token.get("subdomain")
+            # Add any other fields you packed into the token
+        }
+
+    except Exception as e:
+        return Response({"error": "Could not decode user profile from token.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    # Step 3: Return both the original tokens and the extracted user profile to the frontend
     return Response({"tokens": tokens, "user": user_profile}, status=status.HTTP_200_OK)
 
 
