@@ -182,10 +182,73 @@ const Login = ({ onLogin, showNotif }) => {
   );
 };
 
+const SQLShell = ({ db, onClose, showNotif }) => {
+  const [password, setPassword] = useState('');
+  const [query, setQuery] = useState('SELECT * FROM pg_catalog.pg_tables;');
+  const [results, setResults] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const handleRun = async () => {
+    setLoading(true);
+    try {
+      const res = await nidhiApi.post(`/requests/shell/${db.id}/`, { password, query });
+      setResults(res.data);
+    } catch (e) { showNotif(e.response?.data?.error || "Execution failed."); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-content glass p-8 rounded-[3rem]" onClick={e => e.stopPropagation()}>
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-xl font-bold">SQL Shell: {db.db_name}</h2>
+          <button onClick={onClose} className="p-2 bg-transparent text-ocean-900 text-xl">&times;</button>
+        </div>
+        <div className="space-y-4">
+          <div className="form-group">
+            <label>Database Password</label>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter your DB password" />
+          </div>
+          <div className="form-group">
+            <label>SQL Query</label>
+            <textarea 
+              className="w-full p-4 rounded-2xl bg-white/50 border border-white/50 font-mono text-sm min-h-[100px]"
+              value={query} 
+              onChange={e => setQuery(e.target.value)} 
+            />
+          </div>
+          <button onClick={handleRun} disabled={loading} className="w-full">
+            {loading ? 'Running...' : 'Execute Query'}
+          </button>
+        </div>
+        
+        {results && (
+          <div className="mt-8 overflow-x-auto">
+            <h3 className="font-bold mb-4">Results</h3>
+            {results.results ? (
+              <table className="sql-results-table">
+                <thead>
+                  <tr>{results.columns.map(c => <th key={c}>{c}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {results.results.map((row, i) => (
+                    <tr key={i}>{results.columns.map(c => <td key={c}>{String(row[c])}</td>)}</tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : <p className="text-sage-600 font-bold">{results.message}</p>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const StudentDashboard = ({ showNotif }) => {
   const [requests, setRequests] = useState([]);
   const [dbName, setDbName] = useState('');
   const [loading, setLoading] = useState(false);
+  const [activeShell, setActiveShell] = useState(null);
 
   const fetch = useCallback(async () => {
     try {
@@ -208,8 +271,25 @@ const StudentDashboard = ({ showNotif }) => {
     finally { setLoading(false); }
   };
 
+  const handleBackup = async (db) => {
+    const password = prompt(`Enter password for ${db.db_name} to generate backup:`);
+    if (!password) return;
+    try {
+      const res = await nidhiApi.post(`/requests/backup/${db.id}/`, { password });
+      const blob = new Blob([res.data.sql_content], { type: 'text/plain' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${db.db_name}_backup.sql`;
+      a.click();
+      showNotif("Backup downloaded successfully.", "success");
+    } catch (e) { showNotif(e.response?.data?.error || "Backup failed."); }
+  };
+
   return (
     <div className="max-w-5xl mx-auto space-y-16">
+      {activeShell && <SQLShell db={activeShell} onClose={() => setActiveShell(null)} showNotif={showNotif} />}
+      
       <section className="glass p-12 rounded-[3.5rem] border-white/60 relative overflow-hidden group">
         <div className="absolute top-0 right-0 p-12 opacity-5 pointer-events-none group-hover:opacity-10 transition-opacity">
           <IconLeaf size={120} />
@@ -248,15 +328,17 @@ const StudentDashboard = ({ showNotif }) => {
           {requests.map(req => (
             <div key={req.id} className="database-card glass p-8 rounded-[2.8rem] hover:-translate-y-2 transition-all duration-300 border-white/80">
               <div className="flex justify-between items-start mb-8">
-                <h3 className="font-bold text-lg text-ocean-900">{req.db_name}</h3>
+                <div className="max-w-[70%]">
+                  <h3 className="font-bold text-lg text-ocean-900" title={req.db_name}>{req.db_name}</h3>
+                  <p className="text-[10px] opacity-40 font-mono">{req.db_user}</p>
+                </div>
                 <span className={`status status-${req.status} px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest`}>{req.status}</span>
               </div>
               
               {req.status === 'approved' && (
-                <div className="space-y-4 mb-10 text-[13px] font-medium opacity-70 bg-white/40 p-6 rounded-[1.8rem] border border-white/50">
-                  <div className="flex justify-between"><span className="opacity-50">Host</span><span>jnwn.xyz</span></div>
+                <div className="space-y-4 mb-8 text-[12px] font-medium opacity-70 bg-white/40 p-6 rounded-[1.8rem] border border-white/50">
+                  <div className="flex justify-between"><span className="opacity-50">Host</span><span>nidhi.jnwn.xyz</span></div>
                   <div className="flex justify-between"><span className="opacity-50">Port</span><span>5435</span></div>
-                  <div className="flex justify-between"><span className="opacity-50">User</span><span>{req.db_user}</span></div>
                 </div>
               )}
 
@@ -266,16 +348,20 @@ const StudentDashboard = ({ showNotif }) => {
                     const res = await nidhiApi.post(`/requests/reveal/${req.id}/`);
                     alert(`ACCESS KEY: ${res.data.db_password}\n(This will never be shown again.)`);
                     fetch();
-                  }}>Reveal Key</button>
+                  }}>Reveal</button>
                 )}
                 {req.status === 'approved' && (
-                  <button className="action-button-danger text-[10px] font-bold uppercase tracking-widest px-6 py-3" onClick={async () => {
-                    if(window.confirm(`Permanently de-provision ${req.db_name}?`)) {
-                      await nidhiApi.post(`/requests/delete/${req.id}/`);
-                      showNotif("Instance de-provisioned.", "success");
-                      fetch();
-                    }
-                  }}>Delete</button>
+                  <>
+                    <button className="action-button-secondary text-[10px] font-bold uppercase tracking-widest px-4 py-3" onClick={() => setActiveShell(req)}>Shell</button>
+                    <button className="action-button-secondary text-[10px] font-bold uppercase tracking-widest px-4 py-3" onClick={() => handleBackup(req)}>Backup</button>
+                    <button className="action-button-danger text-[10px] font-bold uppercase tracking-widest px-4 py-3" onClick={async () => {
+                      if(window.confirm(`Permanently delete ${req.db_name}?`)) {
+                        await nidhiApi.post(`/requests/delete/${req.id}/`);
+                        showNotif("Instance deleted.", "success");
+                        fetch();
+                      }
+                    }}>Delete</button>
+                  </>
                 )}
               </div>
             </div>

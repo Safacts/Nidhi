@@ -391,3 +391,101 @@ def list_database_tables(request, request_id):
     finally:
         if conn:
             conn.close()
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticatedUser])
+def run_sql_query(request, request_id):
+    user_id = request.headers.get('X-User-Id')
+    password = request.data.get('password')
+    query = request.data.get('query')
+
+    if not password or not query:
+        return Response({"error": "Password and SQL query are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        db_request = DatabaseRequest.objects.get(id=request_id, student_id=user_id)
+    except DatabaseRequest.DoesNotExist:
+        return Response({"error": "Request not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    conn = None
+    try:
+        # Connect AS THE USER
+        conn = psycopg2.connect(
+            dbname=db_request.db_name,
+            user=db_request.db_user,
+            password=password,
+            host=os.getenv('PI_DB_HOST'),
+            port=os.getenv('PI_DB_PORT')
+        )
+        conn.autocommit = True
+        cursor = conn.cursor()
+        
+        cursor.execute(query)
+        
+        if cursor.description:
+            columns = [desc[0] for desc in cursor.description]
+            rows = cursor.fetchall()
+            results = [dict(zip(columns, row)) for row in rows]
+            return Response({"columns": columns, "results": results}, status=status.HTTP_200_OK)
+        else:
+            return Response({"message": "Query executed successfully. No results returned."}, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        return Response({"error": f"SQL Execution Error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    finally:
+        if conn:
+            conn.close()
+
+import subprocess
+import tempfile
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticatedUser])
+def backup_database(request, request_id):
+    user_id = request.headers.get('X-User-Id')
+    password = request.data.get('password')
+
+    if not password:
+        return Response({"error": "Password is required for backup."}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        db_request = DatabaseRequest.objects.get(id=request_id, student_id=user_id)
+    except DatabaseRequest.DoesNotExist:
+        return Response({"error": "Request not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        # Create a temporary file for the backup
+        with tempfile.NamedTemporaryFile(suffix=".sql", delete=False) as tmp:
+            backup_path = tmp.name
+
+        # Prepare pg_dump command
+        env = os.environ.copy()
+        env["PGPASSWORD"] = password
+        
+        cmd = [
+            "pg_dump",
+            "-h", os.getenv('PI_DB_HOST'),
+            "-U", db_request.db_user,
+            "-d", db_request.db_name,
+            "-f", backup_path,
+            "-F", "p" 
+        ]
+        
+        result = subprocess.run(cmd, env=env, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            return Response({"error": f"Backup failed: {result.stderr}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        with open(backup_path, 'r') as f:
+            content = f.read()
+        
+        os.remove(backup_path)
+
+        return Response({
+            "message": "Backup created successfully.",
+            "db_name": db_request.db_name,
+            "sql_content": content
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        return Response({"error": f"Internal Error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
