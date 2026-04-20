@@ -141,14 +141,8 @@ const Login = ({ onLogin, showNotif }) => {
     e.preventDefault();
     setLoading(true);
     try {
-      const res = await authApi.post('/token/', { username, password });
-      const decoded = jwtDecode(res.data.access);
-      onLogin({
-        id: decoded.user_id,
-        username: decoded.username,
-        role: decoded.role,
-        college: decoded.subdomain
-      }, res.data);
+      const res = await nidhiApi.post('/login/', { username, password });
+      onLogin(res.data.user, res.data.tokens);
     } catch (err) {
       showNotif('Access denied. Please check your credentials.');
     } finally { setLoading(false); }
