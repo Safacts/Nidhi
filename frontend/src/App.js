@@ -331,8 +331,10 @@ const StudentDashboard = ({ showNotif }) => {
               
               {req.status === 'approved' && (
                 <div className="space-y-4 mb-8 text-[12px] font-medium opacity-70 bg-white/40 p-6 rounded-[1.8rem] border border-white/50">
-                  <div className="flex justify-between"><span className="opacity-50">Host</span><span>nidhi.jnwn.xyz</span></div>
+                  <div className="flex justify-between"><span className="opacity-50">Host</span><span>117.244.0.71</span></div>
                   <div className="flex justify-between"><span className="opacity-50">Port</span><span>5435</span></div>
+                  <div className="flex justify-between"><span className="opacity-50">Database</span><span>{req.db_name}</span></div>
+                  <div className="flex justify-between"><span className="opacity-50">User</span><span>{req.db_user}</span></div>
                 </div>
               )}
 
