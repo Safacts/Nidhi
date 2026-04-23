@@ -63,7 +63,7 @@ function App() {
 
   useEffect(() => {
     const stored = localStorage.getItem('nidhi_user');
-    if (stored && isLoggedIn) setUser(JSON.parse(stored));
+    if (stored && isLoggedIn && stored !== 'undefined') setUser(JSON.parse(stored));
   }, [isLoggedIn]);
 
   useEffect(() => {
