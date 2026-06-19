@@ -1,0 +1,14 @@
+version: '3.8'
+services:
+  db_standby:
+    image: postgres:13
+    volumes:
+      - ./standby_nidhi_data:/var/lib/postgresql/data/
+    ports:
+      - "5433:5432"
+    command:
+      - "postgres"
+      - "-c"
+      - "listen_addresses=*"
+      - "-c"
+      - "hot_standby=on"

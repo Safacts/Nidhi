@@ -1,22 +1,15 @@
-# backend/api/urls.py
 from django.urls import path
 from . import views
 
 urlpatterns = [
-    path('login/', views.login_view, name='login'),
-    
-    # Student endpoints
-    path('requests/create/', views.create_database_request, name='create_request'),
-    path('requests/my/', views.list_my_requests, name='my_requests'),
-
-    # Admin endpoints
-    path('admin/requests/pending/', views.list_pending_requests, name='pending_requests'),
-    path('admin/requests/approve/<uuid:request_id>/', views.approve_database_request, name='approve_request'),
-    path('requests/reveal/<uuid:request_id>/', views.reveal_credentials, name='reveal_credentials'),
-    path('requests/delete/<uuid:request_id>/', views.delete_database, name='delete_database'),
-    path('requests/change-password/<uuid:request_id>/', views.change_password, name='change_password'),
-    path('requests/size/<uuid:request_id>/', views.get_database_size, name='get_database_size'),
-    path('requests/tables/<uuid:request_id>/', views.list_database_tables, name='list_database_tables'),
-    path('requests/shell/<uuid:request_id>/', views.run_sql_query, name='run_sql_query'),
-    path('requests/backup/<uuid:request_id>/', views.backup_database, name='backup_database'),
+    path('instances/auto-provision/', views.auto_provision_instance, name='auto_provision_instance'),
+    path('servers/auto-register/', views.auto_register_server, name='auto_register_server'),
+    path('servers/', views.server_list_create, name='server_list_create'),
+    path('products/', views.product_list_create, name='product_list_create'),
+    path('instances/', views.database_instance_list_create, name='database_instance_list_create'),
+    path('instances/<uuid:instance_id>/delete/', views.delete_database, name='delete_database'),
+    path('instances/<uuid:instance_id>/reveal/', views.reveal_credentials, name='reveal_credentials'),
+    path('instances/<uuid:instance_id>/replicate/', views.replicate_to_dev, name='replicate_to_dev'),
+    path('sso/callback/', views.sso_callback, name='sso_callback'),
+    path('me/', views.me, name='me'),
 ]

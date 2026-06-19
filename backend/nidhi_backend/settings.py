@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     'corsheaders',
     # Our Apps
     'api',
+    'django_celery_beat',
 ]
 
 MIDDLEWARE = [
@@ -152,10 +153,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
 # For development, we allow localhost. For production, you'd change this.
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
+CORS_ALLOW_ALL_ORIGINS = True
 
 
 
@@ -176,3 +174,22 @@ CORS_ALLOW_HEADERS = [
     'x-user-role',
     'x-user-college-id', # <-- ADD THIS LINE
 ]
+
+# Celery Configuration Options
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://redis:6379/0')
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://redis:6379/0')
+CELERY_ACCEPT_CONTENT = ['application/json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = TIME_ZONE
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'api.authentication.RubixTokenAuthentication',
+    ],
+}
+
+# Nidhi Auto-Registration Token
+NIDHI_REGISTRATION_TOKEN = os.environ.get("NIDHI_REGISTRATION_TOKEN", "super_secret_default_token_xyz")
+
+# Nidhi App Auto-Provision API Key
+NIDHI_APP_API_KEY = os.environ.get("NIDHI_APP_API_KEY", "super_secret_app_api_key_123")

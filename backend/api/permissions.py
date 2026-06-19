@@ -12,3 +12,7 @@ class IsAuthenticatedUser(BasePermission):
         role = request.headers.get('X-User-Role', '').lower()
         # This allows any logged-in user, regardless of role
         return role in ['student', 'admin', 'college_admin', 'super_admin', 'faculty']
+
+class IsFoundingEngineer(BasePermission):
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated and getattr(request.user, 'role', '') == 'founding_engineer')

@@ -8,3 +8,7 @@ requests
 django-cors-headers
 gunicorn  # <-- ADD THIS LINE
 PyJWT
+
+celery
+redis
+django-celery-beat

@@ -3,16 +3,16 @@
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
 
 :root {
-  --sage-50: #f4f7f5;
-  --sage-100: #e3eae5;
-  --sage-500: #73997d;
-  --sage-600: #5c7a64;
-  --ocean-800: #333d48;
-  --ocean-900: #1a1f24;
-  --lavender-400: #d2c3e3;
-  --glass: rgba(255, 255, 255, 0.45);
-  --glass-border: rgba(255, 255, 255, 0.5);
-  --shadow-soft: 0 8px 32px 0 rgba(31, 38, 135, 0.05);
+  --sage-50: #f4fbf9;
+  --sage-100: #e5f6f2;
+  --sage-500: #4db6ac;
+  --sage-600: #26a69a;
+  --ocean-800: #1f2937;
+  --ocean-900: #111827;
+  --lavender-400: #b2dfdb;
+  --glass: rgba(255, 255, 255, 0.65);
+  --glass-border: rgba(255, 255, 255, 0.7);
+  --shadow-soft: 0 10px 40px 0 rgba(38, 166, 154, 0.08);
 }
 
 * {
@@ -25,9 +25,9 @@ body {
   font-family: 'Outfit', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: linear-gradient(-45deg, #f4f7f5, #fbfafc, #f5f7f9, #e3eae5);
+  background: linear-gradient(-45deg, #f4fbf9, #ffffff, #f0fdfa, #e5f6f2);
   background-size: 400% 400%;
-  animation: mesh 15s ease infinite;
+  animation: mesh 12s ease infinite;
   min-height: 100vh;
   color: var(--ocean-900);
 }
@@ -144,7 +144,7 @@ button:disabled {
 }
 
 .action-button-danger {
-  background: #e57373;
+  background: #00796b;
 }
 
 .action-button-secondary {
@@ -268,11 +268,11 @@ button:disabled {
 
 /* Dark Mode Overrides */
 .dark-mode {
-  --glass: rgba(26, 31, 36, 0.6);
-  --glass-border: rgba(255, 255, 255, 0.1);
-  --ocean-900: #f4f7f5;
-  --ocean-800: #e3eae5;
-  background: linear-gradient(-45deg, #0f172a, #1e293b, #0f172a);
+  --glass: rgba(15, 23, 42, 0.6);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --ocean-900: #f4fbf9;
+  --ocean-800: #e5f6f2;
+  background: linear-gradient(-45deg, #090e17, #0f172a, #090e17);
 }
 
 .dark-mode input {

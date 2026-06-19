@@ -1,491 +1,389 @@
-# backend/api/views.py
-
-# --- Corrected and complete imports ---
-import requests
 import os
 import psycopg2
+import requests
 import secrets
 import string
+import subprocess
+import tempfile
 from psycopg2 import sql
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
-from .models import DatabaseRequest
-from .serializers import DatabaseRequestSerializer
-from .permissions import IsAuthenticatedUser, IsAdminUser
-import jwt
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from .models import DatabaseServer, Product, DatabaseInstance, DatabaseBackup, EmployeeProductAssignment
+from .serializers import DatabaseServerSerializer, ProductSerializer, DatabaseInstanceSerializer, DatabaseBackupSerializer
+from .permissions import IsFoundingEngineer
 
-# --- Constants ---
-ATTENDANCE_API_URL = os.getenv("ATTENDANCE_API_URL")
-
-
-
-# Define the quota limit at the top of the file
-DATABASE_QUOTA_PER_USER = 5
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticatedUser])
-def create_database_request(request):
-    user_id = request.headers.get('X-User-Id')
-    user_name = request.headers.get('X-User-Name')
-    college_id = request.headers.get('X-User-College-Id')
-    
-    # --- QUOTA CHECK LOGIC ---
-    current_db_count = DatabaseRequest.objects.filter(student_id=user_id).count()
-    if current_db_count >= DATABASE_QUOTA_PER_USER:
-        return Response(
-            {"error": f"You have reached your maximum quota of {DATABASE_QUOTA_PER_USER} databases."},
-            status=status.HTTP_403_FORBIDDEN
-        )
-    # --- END OF QUOTA CHECK ---
-
-# # --- Authentication View ---
-# @api_view(['POST'])
-# @permission_classes([AllowAny])
-# def login_view(request):
-#     username = request.data.get('username')
-#     password = request.data.get('password')
-
-#     if not username or not password:
-#         return Response({"error": "Username and password are required."}, status=status.HTTP_400_BAD_REQUEST)
-
-#     try:
-#         token_response = requests.post(f"{ATTENDANCE_API_URL}/api/users/token/", json={"username": username, "password": password}, timeout=10)
-#         token_response.raise_for_status()
-#         tokens = token_response.json()
-#     except requests.exceptions.HTTPError:
-#         return Response({"error": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
-#     except requests.exceptions.RequestException as e:
-#         return Response({"error": "Could not connect to authentication service.", "details": str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-
-#     try:
-#         access_token = tokens.get('access')
-#         headers = {'Authorization': f'Bearer {access_token}'}
-#         profile_response = requests.get(f"{ATTENDANCE_API_URL}/api/users/profile/", headers=headers, timeout=10)
-#         profile_response.raise_for_status()
-#         user_profile = profile_response.json()
-#     except requests.exceptions.RequestException as e:
-#         return Response({"error": "Could not retrieve user profile.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-#     return Response({"tokens": tokens, "user": user_profile}, status=status.HTTP_200_OK)
-
-
-# --- REPLACE THE OLD login_view WITH THIS NEW ONE ---
 @api_view(['POST'])
 @permission_classes([AllowAny])
-def login_view(request):
-    username = request.data.get('username')
-    password = request.data.get('password')
-
-    if not username or not password:
-        return Response({"error": "Username and password are required."}, status=status.HTTP_400_BAD_REQUEST)
-
-    # Step 1: Call Aacharya to get the authentication tokens
-    try:
-        # NOTE: This URL should be the one from your .env file, which is correct now.
-        token_response = requests.post(ATTENDANCE_API_URL, json={"username": username, "password": password}, timeout=10)
-        
-        # Raise an exception for bad status codes (like 401 Unauthorized)
-        token_response.raise_for_status() 
-        tokens = token_response.json()
-
-    except requests.exceptions.HTTPError:
-        return Response({"error": "Login failed. Please check your credentials or account status."}, status=status.HTTP_401_UNAUTHORIZED)
-    except requests.exceptions.RequestException as e:
-        return Response({"error": "Could not connect to the authentication service.", "details": str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-
-    # Step 2: Decode the access token to get the user details (the new, correct logic)
-    try:
-        access_token = tokens.get('access')
-        if not access_token:
-            return Response({"error": "Authentication service returned an invalid token."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        # We don't need to verify the signature because we trust the token coming from our own internal service.
-        decoded_token = jwt.decode(access_token, options={"verify_signature": False})
-
-        # Create the user profile dictionary from the token's contents
-        user_profile = {
-            "username": decoded_token.get("username"),
-            "email": decoded_token.get("email"),
-            "role": decoded_token.get("role"),
-            "subdomain": decoded_token.get("subdomain")
-            # Add any other fields you packed into the token
-        }
-
-    except Exception as e:
-        return Response({"error": "Could not decode user profile from token.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    # Step 3: Return both the original tokens and the extracted user profile to the frontend
-    return Response({"tokens": tokens, "user": user_profile}, status=status.HTTP_200_OK)
-
-
-# --- (create_database_request is now upgraded with QUOTAS) ---
-@api_view(['POST'])
-@permission_classes([IsAuthenticatedUser])
-def create_database_request(request):
-    user_id = request.headers.get('X-User-Id')
-    current_db_count = DatabaseRequest.objects.filter(student_id=user_id).count()
-    if current_db_count >= DATABASE_QUOTA_PER_USER:
-        return Response({"error": f"You have reached your maximum quota of {DATABASE_QUOTA_PER_USER} databases."}, status=status.HTTP_403_FORBIDDEN)
+def sso_callback(request):
+    code = request.data.get('code')
+    if not code:
+        return Response({'error': 'Authorization code is required.'}, status=status.HTTP_400_BAD_REQUEST)
     
-    # ... (rest of the create logic is the same) ...
-    user_name = request.headers.get('X-User-Name')
-    college_id = request.headers.get('X-User-College-Id')
-    serializer = DatabaseRequestSerializer(data=request.data)
-    if serializer.is_valid():
-        db_user = serializer.validated_data['db_name'].replace('-', '_')[:50] + "_user"
-        serializer.save(student_id=user_id, student_username=user_name, db_user=db_user, college_id=college_id)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticatedUser])
-def list_my_requests(request):
-    user_id = request.headers.get('X-User-Id')
-    requests = DatabaseRequest.objects.filter(student_id=user_id).order_by('-created_at')
-    serializer = DatabaseRequestSerializer(requests, many=True)
-    return Response(serializer.data)
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticatedUser])
-def reveal_credentials(request, request_id):
-    user_id = request.headers.get('X-User-Id')
-    try:
-        db_request = DatabaseRequest.objects.get(id=request_id, student_id=user_id)
-    except DatabaseRequest.DoesNotExist:
-        return Response({"error": "Request not found."}, status=status.HTTP_404_NOT_FOUND)
-
-    if not db_request.db_password_temp:
-        return Response({"error": "Credentials have already been viewed and were deleted."}, status=status.HTTP_400_BAD_REQUEST)
-
-    credentials = {
-        "db_name": db_request.db_name,
-        "db_user": db_request.db_user,
-        "db_password": db_request.db_password_temp,
+    redirect_uri = request.data.get('redirect_uri', 'http://localhost:3000/auth/callback')
+    
+    token_url = "http://172.21.0.1:8000/o/token/"
+    data = {
+        'grant_type': 'authorization_code',
+        'code': code,
+        'redirect_uri': redirect_uri,
+        'client_id': 'nidhi_client_id_123',
+        'client_secret': 'nidhi_client_secret_xyz789_very_long_string_for_security',
     }
-
-    db_request.db_password_temp = None
-    db_request.save()
-
-    return Response(credentials, status=status.HTTP_200_OK)
-
-
-# --- Admin Views ---
-@api_view(['GET'])
-@permission_classes([IsAdminUser])
-def list_pending_requests(request):
-    college_id = request.headers.get('X-User-College-Id')
     
-    # Superusers can see all requests
-    if college_id == 'superuser_scope':
-        requests = DatabaseRequest.objects.filter(status='pending').order_by('created_at')
-    # Regular admins only see requests from their college
-    else:
-        requests = DatabaseRequest.objects.filter(status='pending', college_id=college_id).order_by('created_at')
-        
-    serializer = DatabaseRequestSerializer(requests, many=True)
-    return Response(serializer.data)
+    try:
+        headers = {'Host': 'localhost'}
+        response = requests.post(token_url, data=data, headers=headers, timeout=10)
+        if response.status_code == 200:
+            token_data = response.json()
+            return Response({'message': 'SSO Login successful!', 'token': token_data.get('access_token')}, status=status.HTTP_200_OK)
+        else:
+            return Response({'error': 'Failed to exchange token.', 'details': response.json()}, status=status.HTTP_400_BAD_REQUEST)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+from django.conf import settings
 
 @api_view(['POST'])
-@permission_classes([IsAdminUser])
-def approve_database_request(request, request_id):
+@permission_classes([AllowAny])
+def auto_register_server(request):
+    """
+    Autonomously register a new VPS node into the Data Plane.
+    Protected by NIDHI_REGISTRATION_TOKEN.
+    """
+    token = request.headers.get('Authorization', '')
+    expected_token = f"Bearer {getattr(settings, 'NIDHI_REGISTRATION_TOKEN', 'super_secret_default_token_xyz')}"
+    
+    if token != expected_token:
+        return Response({"error": "Unauthorized registration token"}, status=status.HTTP_401_UNAUTHORIZED)
+        
+    data = request.data
+    # Create the server directly
     try:
-        db_request = DatabaseRequest.objects.get(id=request_id, status='pending')
-    except DatabaseRequest.DoesNotExist:
-        return Response({"error": "Request not found or already processed."}, status=status.HTTP_404_NOT_FOUND)
+        server = DatabaseServer.objects.create(
+            name=data.get('name', 'Auto-Registered Node'),
+            host=data.get('host'),
+            port=data.get('port', 5432),
+            root_user=data.get('root_user', 'postgres'),
+            root_password=data.get('root_password'),
+            environment_type='prod',
+            is_active=True
+        )
+        return Response({"message": "Server registered successfully", "id": server.id}, status=status.HTTP_201_CREATED)
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-    new_db_password = ''.join(secrets.choice(string.ascii_letters + string.digits) for i in range(16))
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def auto_provision_instance(request):
+    """
+    Autonomously provisions or retrieves a DB for a startup app via init script.
+    Protected by NIDHI_APP_API_KEY.
+    """
+    token = request.headers.get('Authorization', '')
+    expected_token = f"Bearer {getattr(settings, 'NIDHI_APP_API_KEY', 'super_secret_app_api_key_123')}"
+    
+    if token != expected_token:
+        return Response({"error": "Unauthorized API key"}, status=status.HTTP_401_UNAUTHORIZED)
+        
+    project_slug = request.data.get('project_slug')
+    environment = request.data.get('environment', 'prod').lower()
+    
+    if not project_slug:
+        return Response({"error": "project_slug is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+    # 1. Get or create the product
+    product, _ = Product.objects.get_or_create(
+        name=project_slug, 
+        defaults={'description': f'Auto-created for {project_slug}'}
+    )
+    
+    # 2. Check if instance already exists
+    existing_instance = DatabaseInstance.objects.filter(
+        product=product,
+        server__environment_type=environment,
+        is_deleted=False
+    ).first()
+    
+    if existing_instance:
+        if existing_instance.status != 'available':
+            return Response({"error": "Instance is not yet available"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        db_url = f"postgres://{existing_instance.db_user}:{existing_instance.db_password_temp}@{existing_instance.server.host}:{existing_instance.server.port}/{existing_instance.db_name}"
+        return Response({"database_url": db_url}, status=status.HTTP_200_OK)
+        
+    # 3. Find available server
+    server = DatabaseServer.objects.filter(environment_type=environment, is_active=True).first()
+    if not server:
+        return Response({"error": f"No active server found for environment '{environment}'"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+    # 4. Provision new database
+    db_name = f"{project_slug.replace('-', '_')}_{environment}"[:50]
+    db_user = f"{db_name}_user"[:50]
+    
+    if DatabaseInstance.objects.filter(db_name=db_name).exists():
+        return Response({"error": "Database name conflict"}, status=status.HTTP_409_CONFLICT)
+        
+    new_password = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(16))
+    
+    instance = DatabaseInstance(
+        server=server,
+        product=product,
+        db_name=db_name,
+        db_user=db_user,
+        db_password_temp=new_password,
+        created_by_sso_id='system-auto',
+        status='provisioning'
+    )
+    instance.save()
+    
     conn = None
     try:
         conn = psycopg2.connect(
             dbname="postgres",
-            user=os.getenv('PI_DB_USER'),
-            password=os.getenv('PI_DB_PASSWORD'),
-            host=os.getenv('PI_DB_HOST'),
-            port=os.getenv('PI_DB_PORT')
+            user=server.root_user,
+            password=server.root_password,
+            host=server.host,
+            port=server.port
         )
         conn.autocommit = True
         cursor = conn.cursor()
 
-        create_user_query = sql.SQL("CREATE USER {user} WITH PASSWORD {password}").format(user=sql.Identifier(db_request.db_user), password=sql.Literal(new_db_password))
-        create_db_query = sql.SQL("CREATE DATABASE {db_name}").format(db_name=sql.Identifier(db_request.db_name))
-        grant_privs_query = sql.SQL("GRANT ALL PRIVILEGES ON DATABASE {db_name} TO {user}").format(db_name=sql.Identifier(db_request.db_name), user=sql.Identifier(db_request.db_user))
+        create_user_query = sql.SQL("CREATE USER {user} WITH PASSWORD {password}").format(
+            user=sql.Identifier(db_user), 
+            password=sql.Literal(new_password)
+        )
+        create_db_query = sql.SQL("CREATE DATABASE {db_name}").format(
+            db_name=sql.Identifier(db_name)
+        )
+        grant_privs_query = sql.SQL("GRANT ALL PRIVILEGES ON DATABASE {db_name} TO {user}").format(
+            db_name=sql.Identifier(db_name), 
+            user=sql.Identifier(db_user)
+        )
 
         cursor.execute(create_user_query)
         cursor.execute(create_db_query)
         cursor.execute(grant_privs_query)
         cursor.close()
 
-        db_request.status = 'approved'
-        db_request.approved_by = request.headers.get('X-User-Name')
-        db_request.db_password_temp = new_db_password
-        db_request.save()
+        instance.status = 'available'
+        instance.save()
 
-        return Response({"message": "Database created successfully.", "db_name": db_request.db_name, "db_user": db_request.db_user}, status=status.HTTP_200_OK)
+        db_url = f"postgres://{db_user}:{new_password}@{server.host}:{server.port}/{db_name}"
+        return Response({"database_url": db_url}, status=status.HTTP_201_CREATED)
 
     except Exception as e:
-        db_request.status = 'error'
-        db_request.save()
-        return Response({"error": f"Failed to create database: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        instance.status = 'failed'
+        instance.save()
+        return Response({"error": f"Failed to provision database: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     finally:
         if conn:
             conn.close()
 
+@api_view(['GET', 'POST'])
+@permission_classes([IsFoundingEngineer])
+def server_list_create(request):
+    if request.method == 'GET':
+        servers = DatabaseServer.objects.filter(is_active=True)
+        serializer = DatabaseServerSerializer(servers, many=True)
+        return Response(serializer.data)
+    elif request.method == 'POST':
+        serializer = DatabaseServerSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def product_list_create(request):
+    if request.method == 'GET':
+        products = Product.objects.all()
+        serializer = ProductSerializer(products, many=True)
+        return Response(serializer.data)
+    elif request.method == 'POST':
+        serializer = ProductSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-# --- ADD THESE TWO NEW VIEWS AT THE END OF THE FILE ---
-# C:\myprojects\nidhi\git\Nidhi\backend\api\views.py
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def database_instance_list_create(request):
+    if request.method == 'GET':
+        instances = DatabaseInstance.objects.filter(is_deleted=False).order_by('-created_at')
+        if getattr(request.user, 'role', '') != 'founding_engineer':
+            assigned_product_ids = EmployeeProductAssignment.objects.filter(
+                sso_user_id=request.user.username
+            ).values_list('product_id', flat=True)
+            instances = instances.filter(product_id__in=assigned_product_ids)
+        serializer = DatabaseInstanceSerializer(instances, many=True)
+        return Response(serializer.data)
+        
+    elif request.method == 'POST':
+        server_id = request.data.get('server_id')
+        product_id = request.data.get('product_id')
+        db_name = request.data.get('db_name')
+        created_by_sso_id = request.data.get('created_by_sso_id', 'system')
+        
+        if not server_id or not product_id or not db_name:
+            return Response({"error": "server_id, product_id, and db_name are required."}, status=status.HTTP_400_BAD_REQUEST)
+            
+        server = get_object_or_404(DatabaseServer, id=server_id)
+        product = get_object_or_404(Product, id=product_id)
+        
+        db_user = db_name.replace('-', '_')[:50] + "_user"
+        
+        if DatabaseInstance.objects.filter(db_name=db_name).exists():
+            return Response({"error": "Database name already exists."}, status=status.HTTP_400_BAD_REQUEST)
+            
+        new_password = ''.join(secrets.choice(string.ascii_letters + string.digits) for i in range(16))
+        
+        instance = DatabaseInstance(
+            server=server,
+            product=product,
+            db_name=db_name,
+            db_user=db_user,
+            db_password_temp=new_password,
+            created_by_sso_id=created_by_sso_id,
+            status='provisioning'
+        )
+        instance.save()
+        
+        conn = None
+        try:
+            conn = psycopg2.connect(
+                dbname="postgres",
+                user=server.root_user,
+                password=server.root_password,
+                host=server.host,
+                port=server.port
+            )
+            conn.autocommit = True
+            cursor = conn.cursor()
+
+            create_user_query = sql.SQL("CREATE USER {user} WITH PASSWORD {password}").format(
+                user=sql.Identifier(db_user), 
+                password=sql.Literal(new_password)
+            )
+            create_db_query = sql.SQL("CREATE DATABASE {db_name}").format(
+                db_name=sql.Identifier(db_name)
+            )
+            grant_privs_query = sql.SQL("GRANT ALL PRIVILEGES ON DATABASE {db_name} TO {user}").format(
+                db_name=sql.Identifier(db_name), 
+                user=sql.Identifier(db_user)
+            )
+
+            cursor.execute(create_user_query)
+            cursor.execute(create_db_query)
+            cursor.execute(grant_privs_query)
+            cursor.close()
+
+            instance.status = 'available'
+            instance.save()
+
+            serializer = DatabaseInstanceSerializer(instance)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            instance.status = 'failed'
+            instance.save()
+            return Response({"error": f"Failed to provision database on {server.name}: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        finally:
+            if conn:
+                conn.close()
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticatedUser])
-def delete_database(request, request_id):
-    user_id = request.headers.get('X-User-Id')
-    try:
-        db_request = DatabaseRequest.objects.get(id=request_id, student_id=user_id)
-    except DatabaseRequest.DoesNotExist:
-        return Response({"error": "Request not found."}, status=status.HTTP_404_NOT_FOUND)
-
+@permission_classes([IsFoundingEngineer])
+def delete_database(request, instance_id):
+    """Soft Delete: Revokes access on the DB but keeps the data intact."""
+    instance = get_object_or_404(DatabaseInstance, id=instance_id, is_deleted=False)
+    server = instance.server
+    
     conn = None
     try:
-        # Connect to the main 'postgres' database to perform admin tasks
         conn = psycopg2.connect(
             dbname="postgres",
-            user=os.getenv('PI_DB_USER'),
-            password=os.getenv('PI_DB_PASSWORD'),
-            host=os.getenv('PI_DB_HOST'),
-            port=os.getenv('PI_DB_PORT')
+            user=server.root_user,
+            password=server.root_password,
+            host=server.host,
+            port=server.port
         )
         conn.autocommit = True
         cursor = conn.cursor()
 
-        # --- CORRECTED DELETE LOGIC ---
-        # 1. Terminate any active connections to the target database. This is crucial.
+        # Revoke connect privilege from public and the specific user
+        revoke_query = sql.SQL("REVOKE CONNECT ON DATABASE {db_name} FROM PUBLIC, {user};").format(
+            db_name=sql.Identifier(instance.db_name),
+            user=sql.Identifier(instance.db_user)
+        )
+        cursor.execute(revoke_query)
+        
+        # Optionally, terminate active connections to immediately enforce revocation
         terminate_query = sql.SQL("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = %s;")
-        cursor.execute(terminate_query, [db_request.db_name])
-        
-        # 2. Drop the database itself.
-        drop_db_query = sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(db_request.db_name))
-        cursor.execute(drop_db_query)
-        
-        # 3. Drop the associated user role.
-        drop_user_query = sql.SQL("DROP USER IF EXISTS {}").format(sql.Identifier(db_request.db_user))
-        cursor.execute(drop_user_query)
+        cursor.execute(terminate_query, [instance.db_name])
         
         cursor.close()
         
-        # 4. If all SQL commands succeeded, delete the request record from Nidhi's database.
-        db_request.delete()
-
-        return Response({"message": "Database and user deleted successfully."}, status=status.HTTP_200_OK)
+        # Soft delete record
+        instance.is_deleted = True
+        instance.deleted_at = timezone.now()
+        instance.status = 'stopped'
+        instance.save()
+        
+        return Response({"message": "Database access revoked and soft deleted successfully."}, status=status.HTTP_200_OK)
 
     except Exception as e:
-        # If any step fails, we do NOT delete the Nidhi record so we can investigate.
-        return Response({"error": f"Failed to delete database: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({"error": f"Failed to soft-delete database: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     finally:
         if conn:
             conn.close()
-            
-@api_view(['POST'])
-@permission_classes([IsAuthenticatedUser])
-def change_password(request, request_id):
-    user_id = request.headers.get('X-User-Id')
-    new_password = request.data.get('password')
-
-    if not new_password or len(new_password) < 8:
-        return Response({"error": "A new password of at least 8 characters is required."}, status=status.HTTP_400_BAD_REQUEST)
-    
-    try:
-        db_request = DatabaseRequest.objects.get(id=request_id, student_id=user_id)
-    except DatabaseRequest.DoesNotExist:
-        return Response({"error": "Request not found."}, status=status.HTTP_404_NOT_FOUND)
-
-    conn = None
-    try:
-        conn = psycopg2.connect(dbname="postgres", user=os.getenv('PI_DB_USER'), password=os.getenv('PI_DB_PASSWORD'), host=os.getenv('PI_DB_HOST'), port=os.getenv('PI_DB_PORT'))
-        conn.autocommit = True
-        cursor = conn.cursor()
-
-        # Safely alter the user's password
-        query = sql.SQL("ALTER USER {user} WITH PASSWORD {password}").format(
-            user=sql.Identifier(db_request.db_user),
-            password=sql.Literal(new_password)
-        )
-        cursor.execute(query)
-        cursor.close()
-
-        return Response({"message": "Database password changed successfully."}, status=status.HTTP_200_OK)
-    except Exception as e:
-        return Response({"error": f"Failed to change password: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    finally:
-        if conn:
-            conn.close()
-
-# C:\myprojects\nidhi\git\Nidhi\backend\api\views.py - ADD THESE VIEWS
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticatedUser])
-def get_database_size(request, request_id):
-    user_id = request.headers.get('X-User-Id')
-    try:
-        db_request = DatabaseRequest.objects.get(id=request_id, student_id=user_id)
-    except DatabaseRequest.DoesNotExist:
-        return Response({"error": "Request not found."}, status=status.HTTP_404_NOT_FOUND)
-
-    conn = None
-    try:
-        # We can connect as the superuser to get metadata
-        conn = psycopg2.connect(dbname="postgres", user=os.getenv('PI_DB_USER'), password=os.getenv('PI_DB_PASSWORD'), host=os.getenv('PI_DB_HOST'), port=os.getenv('PI_DB_PORT'))
-        conn.autocommit = True
-        cursor = conn.cursor()
-        
-        # Safely query the database size
-        cursor.execute(sql.SQL("SELECT pg_size_pretty(pg_database_size({db_name}))").format(db_name=sql.Literal(db_request.db_name)))
-        size = cursor.fetchone()[0]
-        cursor.close()
-
-        return Response({"size": size}, status=status.HTTP_200_OK)
-    except Exception as e:
-        return Response({"error": f"Failed to get database size: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    finally:
-        if conn:
-            conn.close()
-
-
-@api_view(['POST']) # Changed to POST to accept the password
-@permission_classes([IsAuthenticatedUser])
-def list_database_tables(request, request_id):
-    user_id = request.headers.get('X-User-Id')
-    password = request.data.get('password')
-
-    if not password:
-        return Response({"error": "Password is required to connect."}, status=status.HTTP_400_BAD_REQUEST)
-
-    try:
-        db_request = DatabaseRequest.objects.get(id=request_id, student_id=user_id)
-    except DatabaseRequest.DoesNotExist:
-        return Response({"error": "Request not found."}, status=status.HTTP_404_NOT_FOUND)
-
-    conn = None
-    try:
-        # Securely connect AS THE USER using the password they provided
-        conn = psycopg2.connect(
-            dbname=db_request.db_name,
-            user=db_request.db_user,
-            password=password,
-            host=os.getenv('PI_DB_HOST'),
-            port=os.getenv('PI_DB_PORT')
-        )
-        conn.autocommit = True
-        cursor = conn.cursor()
-        query = "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname != 'pg_catalog' AND schemaname != 'information_schema';"
-        cursor.execute(query)
-        tables = [row[0] for row in cursor.fetchall()]
-        cursor.close()
-        return Response({"tables": tables}, status=status.HTTP_200_OK)
-    except psycopg2.OperationalError:
-        return Response({"error": "Authentication failed. Please check your password."}, status=status.HTTP_403_FORBIDDEN)
-    except Exception as e:
-        return Response({"error": f"Failed to list tables: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    finally:
-        if conn:
-            conn.close()
+@permission_classes([IsFoundingEngineer])
+def reveal_credentials(request, instance_id):
+    instance = get_object_or_404(DatabaseInstance, id=instance_id, is_deleted=False)
+    credentials = {
+        "host": instance.server.host,
+        "port": instance.server.port,
+        "db_name": instance.db_name,
+        "db_user": instance.db_user,
+        "db_password": instance.db_password_temp,
+        "connection_string": f"postgres://{instance.db_user}:{instance.db_password_temp}@{instance.server.host}:{instance.server.port}/{instance.db_name}"
+    }
+    return Response(credentials, status=status.HTTP_200_OK)
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticatedUser])
-def run_sql_query(request, request_id):
-    user_id = request.headers.get('X-User-Id')
-    password = request.data.get('password')
-    query = request.data.get('query')
-
-    if not password or not query:
-        return Response({"error": "Password and SQL query are required."}, status=status.HTTP_400_BAD_REQUEST)
-
-    try:
-        db_request = DatabaseRequest.objects.get(id=request_id, student_id=user_id)
-    except DatabaseRequest.DoesNotExist:
-        return Response({"error": "Request not found."}, status=status.HTTP_404_NOT_FOUND)
-
-    conn = None
-    try:
-        # Connect AS THE USER
-        conn = psycopg2.connect(
-            dbname=db_request.db_name,
-            user=db_request.db_user,
-            password=password,
-            host=os.getenv('PI_DB_HOST'),
-            port=os.getenv('PI_DB_PORT')
-        )
-        conn.autocommit = True
-        cursor = conn.cursor()
+@permission_classes([IsFoundingEngineer])
+def replicate_to_dev(request, instance_id):
+    """Triggers the Celery task to replicate a Prod DB to a Dev server."""
+    prod_instance = get_object_or_404(DatabaseInstance, id=instance_id, is_deleted=False)
+    
+    dev_server_id = request.data.get('dev_server_id')
+    new_db_name = request.data.get('new_db_name')
+    
+    if not dev_server_id or not new_db_name:
+        return Response({"error": "dev_server_id and new_db_name are required."}, status=status.HTTP_400_BAD_REQUEST)
         
-        cursor.execute(query)
-        
-        if cursor.description:
-            columns = [desc[0] for desc in cursor.description]
-            rows = cursor.fetchall()
-            results = [dict(zip(columns, row)) for row in rows]
-            return Response({"columns": columns, "results": results}, status=status.HTTP_200_OK)
-        else:
-            return Response({"message": "Query executed successfully. No results returned."}, status=status.HTTP_200_OK)
+    from .tasks import replicate_prod_to_dev
+    
+    # Trigger celery task
+    replicate_prod_to_dev.delay(prod_instance.id, dev_server_id, new_db_name)
+    
+    return Response({
+        "message": "Replication task triggered successfully.",
+        "source_db": prod_instance.db_name,
+        "target_db": new_db_name
+    }, status=status.HTTP_202_ACCEPTED)
 
-    except Exception as e:
-        return Response({"error": f"SQL Execution Error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    finally:
-        if conn:
-            conn.close()
-
-import subprocess
-import tempfile
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticatedUser])
-def backup_database(request, request_id):
-    user_id = request.headers.get('X-User-Id')
-    password = request.data.get('password')
-
-    if not password:
-        return Response({"error": "Password is required for backup."}, status=status.HTTP_400_BAD_REQUEST)
-
-    try:
-        db_request = DatabaseRequest.objects.get(id=request_id, student_id=user_id)
-    except DatabaseRequest.DoesNotExist:
-        return Response({"error": "Request not found."}, status=status.HTTP_404_NOT_FOUND)
-
-    try:
-        # Create a temporary file for the backup
-        with tempfile.NamedTemporaryFile(suffix=".sql", delete=False) as tmp:
-            backup_path = tmp.name
-
-        # Prepare pg_dump command
-        env = os.environ.copy()
-        env["PGPASSWORD"] = password
-        
-        cmd = [
-            "pg_dump",
-            "-h", os.getenv('PI_DB_HOST'),
-            "-U", db_request.db_user,
-            "-d", db_request.db_name,
-            "-f", backup_path,
-            "-F", "p" 
-        ]
-        
-        result = subprocess.run(cmd, env=env, capture_output=True, text=True)
-        
-        if result.returncode != 0:
-            return Response({"error": f"Backup failed: {result.stderr}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        with open(backup_path, 'r') as f:
-            content = f.read()
-        
-        os.remove(backup_path)
-
-        return Response({
-            "message": "Backup created successfully.",
-            "db_name": db_request.db_name,
-            "sql_content": content
-        }, status=status.HTTP_200_OK)
-
-    except Exception as e:
-        return Response({"error": f"Internal Error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def me(request):
+    return Response({
+        'username': request.user.username,
+        'role': getattr(request.user, 'role', 'employee')
+    })
