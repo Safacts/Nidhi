@@ -6,9 +6,12 @@ import { ThemeToggle } from '../contexts/ThemeContext';
 const Login = () => {
   const handleLogin = () => {
     // In OAuth flow, we redirect to the IdP
-    const clientId = 'nidhi_client_id_123';
-    const redirectUri = encodeURIComponent(`http://${window.location.hostname}:3000/auth/callback`);
-    const rubixAuthUrl = `http://${window.location.hostname}:8000/o/authorize/?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}`;
+    const clientId = process.env.REACT_APP_RUBIX_CLIENT_ID || 'nidhi_client_id_123';
+    const redirectUri = encodeURIComponent(process.env.REACT_APP_RUBIX_REDIRECT_URI || 'http://localhost:3000/auth/callback');
+    
+    // Point directly to the live identity provider
+    const rubixAuthUrl = `https://rubix.novamymentor.cloud/o/authorize/?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}`;
+    
     window.location.href = rubixAuthUrl;
   };
 

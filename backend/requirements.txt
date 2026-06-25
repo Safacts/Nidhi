@@ -12,3 +12,4 @@ PyJWT
 celery
 redis
 django-celery-beat
+minio

@@ -36,4 +36,12 @@ env/
 .idea/
 .vscode/
 .DS_Store
-*.swp
+*.swpcelerybeat-schedule
+delete_dbs.py
+get_creds.py
+list_metadata.py
+test_introspect.py
+backend/celerybeat-schedule
+backend/delete_dbs.py
+backend/get_creds.py
+backend/list_metadata.py

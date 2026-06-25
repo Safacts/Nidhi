@@ -4,6 +4,7 @@ import Login from './pages/Login';
 import AuthCallback from './pages/AuthCallback';
 import EmployeeDashboard from './pages/EmployeeDashboard';
 import AdminDashboard from './pages/AdminDashboard';
+import DatabaseStudio from './pages/DatabaseStudio';
 import { ThemeProvider } from './contexts/ThemeContext';
 import './App.css';
 
@@ -31,6 +32,12 @@ function App() {
             <Route path="/admin" element={
               <PrivateRoute>
                 <AdminDashboard />
+              </PrivateRoute>
+            } />
+            
+            <Route path="/studio/:id" element={
+              <PrivateRoute>
+                <DatabaseStudio />
               </PrivateRoute>
             } />
 

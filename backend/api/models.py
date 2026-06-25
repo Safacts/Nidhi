@@ -85,3 +85,29 @@ class DatabaseBackup(models.Model):
 
     def __str__(self):
         return f"Backup {self.id} for {self.instance.db_name}"
+
+class StorageBucket(models.Model):
+    """An S3-compatible Object Storage bucket provisioned on MinIO."""
+    STATUS_CHOICES = [
+        ('provisioning', 'Provisioning'),
+        ('available', 'Available'),
+        ('failed', 'Failed'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    server = models.ForeignKey(DatabaseServer, on_delete=models.PROTECT, related_name='buckets', null=True, blank=True)
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name='buckets')
+    
+    bucket_name = models.CharField(max_length=63, unique=True)
+    access_key = models.CharField(max_length=100)
+    secret_key = models.CharField(max_length=255)
+    endpoint = models.CharField(max_length=255) # e.g. localhost:9000
+    
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='provisioning')
+    created_by_sso_id = models.CharField(max_length=255) 
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Bucket {self.bucket_name} ({self.status})"

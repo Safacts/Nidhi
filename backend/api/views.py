@@ -6,7 +6,7 @@ import string
 import subprocess
 import tempfile
 from psycopg2 import sql
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
@@ -25,18 +25,17 @@ def sso_callback(request):
     
     redirect_uri = request.data.get('redirect_uri', 'http://localhost:3000/auth/callback')
     
-    token_url = "http://172.21.0.1:8000/o/token/"
+    token_url = getattr(settings, 'RUBIX_TOKEN_URL', 'https://rubix.novamymentor.cloud/o/token/')
     data = {
         'grant_type': 'authorization_code',
         'code': code,
         'redirect_uri': redirect_uri,
-        'client_id': 'nidhi_client_id_123',
-        'client_secret': 'nidhi_client_secret_xyz789_very_long_string_for_security',
+        'client_id': os.environ.get('OAUTH_CLIENT_ID', 'nidhi_client_id_123'),
+        'client_secret': os.environ.get('OAUTH_CLIENT_SECRET', 'nidhi_client_secret_xyz789_very_long_string_for_security'),
     }
     
     try:
-        headers = {'Host': 'localhost'}
-        response = requests.post(token_url, data=data, headers=headers, timeout=10)
+        response = requests.post(token_url, data=data, timeout=10)
         if response.status_code == 200:
             token_data = response.json()
             return Response({'message': 'SSO Login successful!', 'token': token_data.get('access_token')}, status=status.HTTP_200_OK)
@@ -48,6 +47,7 @@ def sso_callback(request):
 from django.conf import settings
 
 @api_view(['POST'])
+@authentication_classes([])
 @permission_classes([AllowAny])
 def auto_register_server(request):
     """
@@ -77,6 +77,7 @@ def auto_register_server(request):
         return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['POST'])
+@authentication_classes([])
 @permission_classes([AllowAny])
 def auto_provision_instance(request):
     """
@@ -140,48 +141,11 @@ def auto_provision_instance(request):
     )
     instance.save()
     
-    conn = None
-    try:
-        conn = psycopg2.connect(
-            dbname="postgres",
-            user=server.root_user,
-            password=server.root_password,
-            host=server.host,
-            port=server.port
-        )
-        conn.autocommit = True
-        cursor = conn.cursor()
+    from .tasks import provision_database_task
+    provision_database_task.delay(instance.id)
 
-        create_user_query = sql.SQL("CREATE USER {user} WITH PASSWORD {password}").format(
-            user=sql.Identifier(db_user), 
-            password=sql.Literal(new_password)
-        )
-        create_db_query = sql.SQL("CREATE DATABASE {db_name}").format(
-            db_name=sql.Identifier(db_name)
-        )
-        grant_privs_query = sql.SQL("GRANT ALL PRIVILEGES ON DATABASE {db_name} TO {user}").format(
-            db_name=sql.Identifier(db_name), 
-            user=sql.Identifier(db_user)
-        )
-
-        cursor.execute(create_user_query)
-        cursor.execute(create_db_query)
-        cursor.execute(grant_privs_query)
-        cursor.close()
-
-        instance.status = 'available'
-        instance.save()
-
-        db_url = f"postgres://{db_user}:{new_password}@{server.host}:{server.port}/{db_name}"
-        return Response({"database_url": db_url}, status=status.HTTP_201_CREATED)
-
-    except Exception as e:
-        instance.status = 'failed'
-        instance.save()
-        return Response({"error": f"Failed to provision database: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    finally:
-        if conn:
-            conn.close()
+    db_url = f"postgres://{db_user}:{new_password}@{server.host}:{server.port}/{db_name}"
+    return Response({"database_url": db_url}, status=status.HTTP_202_ACCEPTED)
 
 @api_view(['GET', 'POST'])
 @permission_classes([IsFoundingEngineer])
@@ -254,48 +218,11 @@ def database_instance_list_create(request):
         )
         instance.save()
         
-        conn = None
-        try:
-            conn = psycopg2.connect(
-                dbname="postgres",
-                user=server.root_user,
-                password=server.root_password,
-                host=server.host,
-                port=server.port
-            )
-            conn.autocommit = True
-            cursor = conn.cursor()
+        from .tasks import provision_database_task
+        provision_database_task.delay(instance.id)
 
-            create_user_query = sql.SQL("CREATE USER {user} WITH PASSWORD {password}").format(
-                user=sql.Identifier(db_user), 
-                password=sql.Literal(new_password)
-            )
-            create_db_query = sql.SQL("CREATE DATABASE {db_name}").format(
-                db_name=sql.Identifier(db_name)
-            )
-            grant_privs_query = sql.SQL("GRANT ALL PRIVILEGES ON DATABASE {db_name} TO {user}").format(
-                db_name=sql.Identifier(db_name), 
-                user=sql.Identifier(db_user)
-            )
-
-            cursor.execute(create_user_query)
-            cursor.execute(create_db_query)
-            cursor.execute(grant_privs_query)
-            cursor.close()
-
-            instance.status = 'available'
-            instance.save()
-
-            serializer = DatabaseInstanceSerializer(instance)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-
-        except Exception as e:
-            instance.status = 'failed'
-            instance.save()
-            return Response({"error": f"Failed to provision database on {server.name}: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        finally:
-            if conn:
-                conn.close()
+        serializer = DatabaseInstanceSerializer(instance)
+        return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
 
 @api_view(['POST'])
 @permission_classes([IsFoundingEngineer])

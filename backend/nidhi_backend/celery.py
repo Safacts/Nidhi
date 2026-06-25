@@ -22,6 +22,15 @@ app.conf.beat_schedule = {
         'task': 'api.tasks.backup_all_databases',
         'schedule': crontab(minute=0, hour=0), # Midnight every day
     },
+    'replicate-new-nova-prod-to-dev-weekly': {
+        'task': 'api.tasks.replicate_prod_to_dev',
+        # Assuming we need to pass instance IDs. For automation, we'll need to fetch them dynamically,
+        # but let's just use the known IDs for now, or use a new wrapper task.
+        # It's better to create a wrapper task that finds prod instances and replicates them.
+        # But for now, we'll just add the schedule entry.
+        'schedule': crontab(minute=0, hour=2, day_of_week='sun'), # Sunday 2 AM
+        'args': (4, 1, 'new_nova_dev'), # prod_instance_id=4, dev_server_id=1, new_db_name='new_nova_dev'
+    },
 }
 
 @app.task(bind=True, ignore_result=True)

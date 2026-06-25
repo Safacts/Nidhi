@@ -1,3 +1,4 @@
+import os
 import requests
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed
@@ -18,12 +19,13 @@ class RubixTokenAuthentication(BaseAuthentication):
         # Call the Rubix IdP introspection or userinfo endpoint
         # The main Django OAuth toolkit typically provides an introspection endpoint 
         # or we can simply verify it against a protected resource on Rubix
-        rubix_introspect_url = "http://172.21.0.1:8000/o/introspect/"
+        rubix_introspect_url = getattr(settings, 'RUBIX_INTROSPECT_URL', 'https://rubix.novamymentor.cloud/o/introspect/')
+        
         data = {
-            'token': token,
+            'token': token.decode('utf-8') if isinstance(token, bytes) else token,
             # If Rubix requires client id/secret for introspection, we provide them
-            'client_id': 'nidhi_client_id_123',
-            'client_secret': 'nidhi_client_secret_xyz789_very_long_string_for_security',
+            'client_id': os.environ.get('OAUTH_CLIENT_ID', 'nidhi_client_id_123'),
+            'client_secret': os.environ.get('OAUTH_CLIENT_SECRET', 'nidhi_client_secret_xyz789_very_long_string_for_security'),
         }
         
         try:
@@ -36,7 +38,7 @@ class RubixTokenAuthentication(BaseAuthentication):
                     user, created = User.objects.get_or_create(username=username)
                     
                     # We can attach the Rubix token metadata to the user or request for later use
-                    # e.g., request.sso_user_id = username
+                    request.sso_user_id = username
                     user.role = token_data.get('role', 'employee')
                     print("USER ROLE ASSIGNED:", user.role)
                     

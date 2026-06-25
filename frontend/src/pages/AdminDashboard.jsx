@@ -33,21 +33,24 @@ const AdminDashboard = () => {
   const fetchServers = async () => {
     try {
       const res = await fetch(`http://${window.location.hostname}:8001/api/servers/`, { headers: getHeaders() });
-      setServers(await res.json());
+      if (res.ok) setServers(await res.json());
+      else if (res.status === 401 || res.status === 403) navigate('/login');
     } catch (e) { console.error(e); }
   };
 
   const fetchInstances = async () => {
     try {
       const res = await fetch(`http://${window.location.hostname}:8001/api/instances/`, { headers: getHeaders() });
-      setInstances(await res.json());
+      if (res.ok) setInstances(await res.json());
+      else if (res.status === 401 || res.status === 403) navigate('/login');
     } catch (e) { console.error(e); }
   };
 
   const fetchProducts = async () => {
     try {
       const res = await fetch(`http://${window.location.hostname}:8001/api/products/`, { headers: getHeaders() });
-      setProducts(await res.json());
+      if (res.ok) setProducts(await res.json());
+      else if (res.status === 401 || res.status === 403) navigate('/login');
     } catch (e) { console.error(e); }
   };
 
