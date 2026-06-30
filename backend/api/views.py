@@ -1,3 +1,4 @@
+# Founding Engineer: Aadisheshu <safacts001@gmail.com>
 import os
 import psycopg2
 import requests
@@ -12,7 +13,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from .models import DatabaseServer, Product, DatabaseInstance, DatabaseBackup, EmployeeProductAssignment
+from .models import DatabaseServer, Product, DatabaseInstance, DatabaseBackup, EmployeeProductAssignment, StorageBucket
 from .serializers import DatabaseServerSerializer, ProductSerializer, DatabaseInstanceSerializer, DatabaseBackupSerializer
 from .permissions import IsFoundingEngineer
 
@@ -141,11 +142,32 @@ def auto_provision_instance(request):
     )
     instance.save()
     
-    from .tasks import provision_database_task
+    from .tasks import provision_database_task, provision_bucket_task
     provision_database_task.delay(instance.id)
 
+    bucket_name = f"{project_slug}-{environment}-media"[:63]
+    bucket, _ = StorageBucket.objects.get_or_create(
+        bucket_name=bucket_name,
+        defaults={
+            'product': product,
+            'server': None,
+            'access_key': '',
+            'secret_key': '',
+            'endpoint': os.environ.get('PUBLIC_MINIO_ENDPOINT', 'localhost:9000'),
+            'created_by_sso_id': 'system-auto',
+            'status': 'provisioning',
+        }
+    )
+    if bucket.status == 'provisioning':
+        provision_bucket_task.delay(bucket.id)
+
     db_url = f"postgres://{db_user}:{new_password}@{server.host}:{server.port}/{db_name}"
-    return Response({"database_url": db_url}, status=status.HTTP_202_ACCEPTED)
+    return Response({
+        "database_url": db_url,
+        "bucket_name": bucket_name,
+        "bucket_endpoint": bucket.endpoint,
+        "bucket_id": str(bucket.id),
+    }, status=status.HTTP_202_ACCEPTED)
 
 @api_view(['GET', 'POST'])
 @permission_classes([IsFoundingEngineer])
