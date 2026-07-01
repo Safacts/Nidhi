@@ -26,8 +26,9 @@ const AuthCallback = () => {
 
   const exchangeCodeForToken = async (code) => {
     try {
-      const backendUrl = `http://${window.location.hostname}:8001/api/sso/callback/`;
-      const redirectUri = `http://${window.location.hostname}:3000/auth/callback`;
+      const backendUrl = `/api/sso/callback/`;
+      const baseUri = window.location.origin + (window.location.pathname.startsWith('/nidhi') ? '/nidhi' : '');
+      const redirectUri = process.env.REACT_APP_RUBIX_REDIRECT_URI || `${baseUri}/auth/callback`;
       const response = await fetch(backendUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -41,7 +42,7 @@ const AuthCallback = () => {
         
         // Fetch user profile info
         try {
-          const profileResp = await fetch(`http://${window.location.hostname}:8001/api/me/`, {
+          const profileResp = await fetch(`/api/me/`, {
             headers: { 'Authorization': `Bearer ${data.token}` }
           });
           if (profileResp.ok) {
