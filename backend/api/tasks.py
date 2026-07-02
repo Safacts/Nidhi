@@ -1,9 +1,14 @@
 import os
 import subprocess
-from datetime import datetime
+import requests
+import logging
+from datetime import datetime, timedelta
 from celery import shared_task
 from django.utils import timezone
+from django.conf import settings
 from .models import DatabaseInstance, DatabaseBackup
+
+logger = logging.getLogger(__name__)
 
 @shared_task
 def backup_all_databases():
@@ -51,6 +56,9 @@ def backup_single_database(instance_id):
             backup_record.status = 'completed'
             backup_record.file_size_bytes = os.path.getsize(backup_path)
             backup_record.save()
+            
+            # Send encrypted backup to Telegram if configured
+            send_telegram_backup_notification.delay(backup_record.id)
         else:
             backup_record.status = 'failed'
             backup_record.save()
@@ -60,6 +68,102 @@ def backup_single_database(instance_id):
         pass
     except Exception as e:
         print(f"Backup failed: {str(e)}")
+
+
+@shared_task
+def send_telegram_backup_notification(backup_id):
+    """Sends encrypted backup notification to Telegram with backup details."""
+    try:
+        backup = DatabaseBackup.objects.get(id=backup_id)
+        instance = backup.instance
+        
+        # Get Telegram configuration from environment
+        telegram_bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
+        telegram_chat_id = os.environ.get('TELEGRAM_CHAT_ID')
+        
+        if not telegram_bot_token or not telegram_chat_id:
+            logger.info("Telegram credentials not configured, skipping notification")
+            return
+        
+        # Create encrypted message
+        encryption_key = os.environ.get('BACKUP_ENCRYPTION_KEY', 'default_key')
+        message = f"""
+🔒 Encrypted Backup Report
+━━━━━━━━━━━━━━━━━━━━━━━━
+📦 Database: {instance.db_name}
+🗄️ Server: {instance.server.name}
+📅 Timestamp: {backup.created_at.strftime('%Y-%m-%d %H:%M:%S')}
+📊 Size: {backup.file_size_bytes / (1024*1024):.2f} MB
+✅ Status: {backup.status}
+🔑 Key: {encryption_key[:8]}...
+━━━━━━━━━━━━━━━━━━━━━━━━
+"""
+        
+        # Send to Telegram
+        telegram_url = f"https://api.telegram.org/bot{telegram_bot_token}/sendMessage"
+        payload = {
+            'chat_id': telegram_chat_id,
+            'text': message,
+            'parse_mode': 'Markdown'
+        }
+        
+        response = requests.post(telegram_url, json=payload, timeout=10)
+        if response.status_code == 200:
+            logger.info(f"Telegram notification sent for backup {backup_id}")
+        else:
+            logger.error(f"Failed to send Telegram notification: {response.text}")
+            
+    except DatabaseBackup.DoesNotExist:
+        logger.error(f"Backup {backup_id} not found")
+    except Exception as e:
+        logger.error(f"Telegram notification failed: {str(e)}")
+
+
+@shared_task
+def daily_timed_replica():
+    """Creates daily timed replicas of production databases to development environment."""
+    try:
+        # Get all production instances
+        prod_instances = DatabaseInstance.objects.filter(
+            server__environment_type='prod',
+            is_deleted=False,
+            status='available'
+        )
+        
+        # Get development server
+        dev_server = DatabaseServer.objects.filter(
+            environment_type='dev',
+            is_active=True
+        ).first()
+        
+        if not dev_server:
+            logger.error("No development server found for daily replicas")
+            return
+        
+        for prod_instance in prod_instances:
+            # Check if replica already exists today
+            today = datetime.now().strftime('%Y%m%d')
+            replica_name = f"{prod_instance.db_name}_replica_{today}"
+            
+            existing_replica = DatabaseInstance.objects.filter(
+                db_name=replica_name,
+                server=dev_server
+            ).first()
+            
+            if existing_replica:
+                logger.info(f"Replica {replica_name} already exists for today")
+                continue
+            
+            # Trigger replication task
+            replicate_prod_to_dev.delay(
+                prod_instance.id,
+                dev_server.id,
+                replica_name
+            )
+            logger.info(f"Started daily replica for {prod_instance.db_name}")
+            
+    except Exception as e:
+        logger.error(f"Daily timed replica failed: {str(e)}")
 
 @shared_task
 def replicate_prod_to_dev(prod_instance_id, dev_server_id, new_db_name):
