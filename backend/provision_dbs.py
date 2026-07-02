@@ -83,8 +83,8 @@ def provision_db(product_name, server_id, db_name):
         instance.status = 'failed'
         instance.save()
 
-# 1. Vitarn (dev)
-provision_db("Vitarn", 1, "vitarn_dev")
+# 1. Vitharn (dev)
+provision_db("Vitharn", 1, "vitharn_dev")
 
 # 2. Aacharya (dev)
 provision_db("Aacharya", 1, "aacharya_dev")

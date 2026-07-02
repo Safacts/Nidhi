@@ -30,14 +30,14 @@ const EmployeeDashboard = () => {
   const fetchInstances = async () => {
     try {
       const token = localStorage.getItem('sso_token');
-      const response = await fetch(`http://${window.location.hostname}:8001/api/instances/`, {
+      const response = await fetch(`/nidhi-api/instances/`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.status === 401 || response.status === 403) { navigate('/login'); return; }
       const data = await response.json();
       setInstances(Array.isArray(data) ? data : []);
       
-      const prodRes = await fetch(`http://${window.location.hostname}:8001/api/products/`, {
+      const prodRes = await fetch(`/nidhi-api/products/`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (prodRes.status === 401 || prodRes.status === 403) { navigate('/login'); return; }
@@ -54,7 +54,7 @@ const EmployeeDashboard = () => {
   const fetchBuckets = async () => {
     try {
       const token = localStorage.getItem('sso_token');
-      const res = await fetch(`http://${window.location.hostname}:8001/api/buckets/`, {
+      const res = await fetch(`/nidhi-api/buckets/`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.status === 401 || res.status === 403) { navigate('/login'); return; }
@@ -69,7 +69,7 @@ const EmployeeDashboard = () => {
   const fetchServers = async () => {
     try {
       const token = localStorage.getItem('sso_token');
-      const servRes = await fetch(`http://${window.location.hostname}:8001/api/servers/`, {
+      const servRes = await fetch(`/nidhi-api/servers/`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (servRes.status === 401 || servRes.status === 403) { navigate('/login'); return; }
@@ -84,7 +84,7 @@ const EmployeeDashboard = () => {
     e.preventDefault();
     try {
       const token = localStorage.getItem('sso_token');
-      const response = await fetch(`http://${window.location.hostname}:8001/api/instances/`, {
+      const response = await fetch(`/nidhi-api/instances/`, {
         method: 'POST',
         headers: { 
           'Authorization': `Bearer ${token}`,
@@ -113,7 +113,7 @@ const EmployeeDashboard = () => {
   const handleViewBucketCredentials = async (id) => {
     try {
       const token = localStorage.getItem('sso_token');
-      const res = await fetch(`http://${window.location.hostname}:8001/api/buckets/${id}/reveal/`, {
+      const res = await fetch(`/nidhi-api/buckets/${id}/reveal/`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -132,7 +132,7 @@ const EmployeeDashboard = () => {
     if (!window.confirm("Are you sure you want to request soft-delete? This will revoke access immediately.")) return;
     try {
       const token = localStorage.getItem('sso_token');
-      await fetch(`http://${window.location.hostname}:8001/api/instances/${id}/delete/`, {
+      await fetch(`/nidhi-api/instances/${id}/delete/`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -146,7 +146,7 @@ const EmployeeDashboard = () => {
     e.preventDefault();
     try {
       const token = localStorage.getItem('sso_token');
-      const res = await fetch(`http://${window.location.hostname}:8001/api/buckets/provision/`, {
+      const res = await fetch(`/nidhi-api/buckets/provision/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -171,7 +171,7 @@ const EmployeeDashboard = () => {
   const handleViewCredentials = async (id) => {
     try {
       const token = localStorage.getItem('sso_token');
-      const res = await fetch(`http://${window.location.hostname}:8001/api/instances/${id}/reveal/`, {
+      const res = await fetch(`/nidhi-api/instances/${id}/reveal/`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {

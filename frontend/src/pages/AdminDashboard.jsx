@@ -32,7 +32,7 @@ const AdminDashboard = () => {
 
   const fetchServers = async () => {
     try {
-      const res = await fetch(`http://${window.location.hostname}:8001/api/servers/`, { headers: getHeaders() });
+      const res = await fetch(`/nidhi-api/servers/`, { headers: getHeaders() });
       if (res.ok) setServers(await res.json());
       else if (res.status === 401 || res.status === 403) navigate('/login');
     } catch (e) { console.error(e); }
@@ -40,7 +40,7 @@ const AdminDashboard = () => {
 
   const fetchInstances = async () => {
     try {
-      const res = await fetch(`http://${window.location.hostname}:8001/api/instances/`, { headers: getHeaders() });
+      const res = await fetch(`/nidhi-api/instances/`, { headers: getHeaders() });
       if (res.ok) setInstances(await res.json());
       else if (res.status === 401 || res.status === 403) navigate('/login');
     } catch (e) { console.error(e); }
@@ -48,7 +48,7 @@ const AdminDashboard = () => {
 
   const fetchProducts = async () => {
     try {
-      const res = await fetch(`http://${window.location.hostname}:8001/api/products/`, { headers: getHeaders() });
+      const res = await fetch(`/nidhi-api/products/`, { headers: getHeaders() });
       if (res.ok) setProducts(await res.json());
       else if (res.status === 401 || res.status === 403) navigate('/login');
     } catch (e) { console.error(e); }
@@ -57,7 +57,7 @@ const AdminDashboard = () => {
   const handleCreateProduct = async (e) => {
     e.preventDefault();
     try {
-      const res = await fetch(`http://${window.location.hostname}:8001/api/products/`, {
+      const res = await fetch(`/nidhi-api/products/`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify(newProduct)
@@ -76,7 +76,7 @@ const AdminDashboard = () => {
     e.preventDefault();
     try {
       const payload = { ...newServer, port: parseInt(newServer.port) };
-      const res = await fetch(`http://${window.location.hostname}:8001/api/servers/`, {
+      const res = await fetch(`/nidhi-api/servers/`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify(payload)
@@ -96,7 +96,7 @@ const AdminDashboard = () => {
     if (!devServer) return alert("No dev server found for replication.");
     if (!window.confirm("Force replication to Dev? This will clone Prod data over.")) return;
     try {
-      await fetch(`http://${window.location.hostname}:8001/api/instances/${id}/replicate/`, {
+      await fetch(`/nidhi-api/instances/${id}/replicate/`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({ dev_server_id: devServer.id, new_db_name: `repl_${Date.now()}` })
