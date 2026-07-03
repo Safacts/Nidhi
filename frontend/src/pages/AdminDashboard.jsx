@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Database, Server, Copy, ShieldAlert, Zap, Plus, Package, User, Settings, CreditCard, ChevronDown, LogOut, HardDrive } from 'lucide-react';
+import { Database, Server, Copy, ShieldAlert, Zap, Plus, Package, User, Settings, CreditCard, ChevronDown, LogOut, HardDrive, ExternalLink } from 'lucide-react';
 import { Logo } from '../components/Logo';
 import { ThemeToggle } from '../contexts/ThemeContext';
 import { useNavigate } from 'react-router-dom';
@@ -330,6 +330,7 @@ const AdminDashboard = () => {
                     <th className="px-6 py-4">Endpoint</th>
                     <th className="px-6 py-4">Status</th>
                     <th className="px-6 py-4">Created</th>
+                    <th className="px-6 py-4">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 dark:divide-slate-700/50">
@@ -356,6 +357,14 @@ const AdminDashboard = () => {
                         </span>
                       </td>
                       <td className="px-6 py-4 text-slate-500 dark:text-slate-400 text-sm">{new Date(bucket.created_at).toLocaleDateString()}</td>
+                      <td className="px-6 py-4">
+                        <button 
+                          onClick={() => navigate(`/bucket-studio/${bucket.id}`)}
+                          className="px-3 py-1 bg-indigo-100 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-300 dark:border-indigo-500/20 rounded hover:bg-indigo-200 dark:hover:bg-indigo-500/20 text-xs flex items-center gap-1"
+                        >
+                          <ExternalLink className="w-3 h-3" /> Explore
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

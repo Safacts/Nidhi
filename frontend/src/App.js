@@ -5,6 +5,7 @@ import AuthCallback from './pages/AuthCallback';
 import EmployeeDashboard from './pages/EmployeeDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import DatabaseStudio from './pages/DatabaseStudio';
+import BucketStudio from './pages/BucketStudio';
 import { ThemeProvider } from './contexts/ThemeContext';
 import './App.css';
 
@@ -38,6 +39,12 @@ function App() {
             <Route path="/studio/:id" element={
               <PrivateRoute>
                 <DatabaseStudio />
+              </PrivateRoute>
+            } />
+
+            <Route path="/bucket-studio/:id" element={
+              <PrivateRoute>
+                <BucketStudio />
               </PrivateRoute>
             } />
 

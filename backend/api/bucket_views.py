@@ -93,7 +93,8 @@ def provision_bucket(request):
 @api_view(['GET'])
 @permission_classes([IsFoundingEngineer])
 def list_buckets(request):
-    """Lists buckets the user has access to via their product assignments."""
+    """Lists buckets the user has access to via their product assignments.
+    Admin users (GOD MODE) see all buckets regardless of assignments."""
     sso_user_id = getattr(request, 'sso_user_id', None)
     if not sso_user_id and request.user and request.user.is_authenticated:
         sso_user_id = request.user.username
@@ -102,12 +103,19 @@ def list_buckets(request):
         return Response({"error": "Missing SSO user context"}, status=status.HTTP_403_FORBIDDEN)
         
     assignments = EmployeeProductAssignment.objects.filter(sso_user_id=sso_user_id)
-    product_ids = [a.product_id for a in assignments]
     
-    buckets = StorageBucket.objects.filter(product_id__in=product_ids).values(
-        'id', 'bucket_name', 'endpoint', 'status', 'created_at', 'product__name',
-        'server__name', 'server__host', 'server__environment_type'
-    )
+    # If no assignments (e.g., admin in GOD MODE), show all buckets
+    if not assignments.exists():
+        buckets = StorageBucket.objects.all().values(
+            'id', 'bucket_name', 'endpoint', 'status', 'created_at', 'product__name',
+            'server__name', 'server__host', 'server__environment_type'
+        )
+    else:
+        product_ids = [a.product_id for a in assignments]
+        buckets = StorageBucket.objects.filter(product_id__in=product_ids).values(
+            'id', 'bucket_name', 'endpoint', 'status', 'created_at', 'product__name',
+            'server__name', 'server__host', 'server__environment_type'
+        )
     
     return Response(list(buckets), status=status.HTTP_200_OK)
 
