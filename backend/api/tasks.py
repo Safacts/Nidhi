@@ -229,6 +229,15 @@ def replicate_prod_to_dev(prod_instance_id, dev_server_id, new_db_name):
         cursor2.execute(sql.SQL("GRANT ALL ON SCHEMA public TO {user}").format(
             user=sql.Identifier(db_user)
         ))
+        cursor2.execute(sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO {user}").format(
+            user=sql.Identifier(db_user)
+        ))
+        cursor2.execute(sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO {user}").format(
+            user=sql.Identifier(db_user)
+        ))
+        cursor2.execute(sql.SQL("ALTER ROLE {user} SET search_path TO public").format(
+            user=sql.Identifier(db_user)
+        ))
         cursor2.close()
         conn2.close()
         
@@ -306,6 +315,15 @@ def provision_database_task(instance_id):
         conn2.autocommit = True
         cursor2 = conn2.cursor()
         cursor2.execute(sql.SQL("GRANT ALL ON SCHEMA public TO {user}").format(
+            user=sql.Identifier(instance.db_user)
+        ))
+        cursor2.execute(sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO {user}").format(
+            user=sql.Identifier(instance.db_user)
+        ))
+        cursor2.execute(sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO {user}").format(
+            user=sql.Identifier(instance.db_user)
+        ))
+        cursor2.execute(sql.SQL("ALTER ROLE {user} SET search_path TO public").format(
             user=sql.Identifier(instance.db_user)
         ))
         cursor2.close()
