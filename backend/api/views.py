@@ -91,19 +91,21 @@ def auto_provision_instance(request):
     if token != expected_token:
         return Response({"error": "Unauthorized API key"}, status=status.HTTP_401_UNAUTHORIZED)
         
-    project_slug = request.data.get('project_slug')
+    project_slug = request.data.get('project_slug', '').lower().replace(' ', '_')
     environment = request.data.get('environment', 'prod').lower()
     
     if not project_slug:
         return Response({"error": "project_slug is required"}, status=status.HTTP_400_BAD_REQUEST)
         
-    # 1. Get or create the product
-    product, _ = Product.objects.get_or_create(
-        name=project_slug, 
-        defaults={'description': f'Auto-created for {project_slug}'}
-    )
+    # Normalize: find existing product case-insensitively
+    product = Product.objects.filter(name__iexact=project_slug).first()
+    if not product:
+        product = Product.objects.create(
+            name=project_slug,
+            description=f'Auto-created for {project_slug}'
+        )
     
-    # 2. Check if instance already exists
+    # 2. Check if instance already exists (case-insensitive)
     existing_instance = DatabaseInstance.objects.filter(
         product=product,
         server__environment_type=environment,
@@ -150,7 +152,7 @@ def auto_provision_instance(request):
     db_name = f"{project_slug.replace('-', '_')}_{environment}"[:50]
     db_user = f"{db_name}_user"[:50]
     
-    if DatabaseInstance.objects.filter(db_name=db_name).exists():
+    if DatabaseInstance.objects.filter(db_name__iexact=db_name).exists():
         return Response({"error": "Database name conflict"}, status=status.HTTP_409_CONFLICT)
         
     new_password = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(16))
@@ -270,9 +272,9 @@ def database_instance_list_create(request):
         
         db_user = db_name.replace('-', '_')[:50] + "_user"
         
-        if DatabaseInstance.objects.filter(db_name=db_name).exists():
+        if DatabaseInstance.objects.filter(db_name__iexact=db_name).exists():
             return Response({"error": "Database name already exists."}, status=status.HTTP_400_BAD_REQUEST)
-            
+
         new_password = ''.join(secrets.choice(string.ascii_letters + string.digits) for i in range(16))
         
         instance = DatabaseInstance(
