@@ -2,8 +2,8 @@ from setuptools import setup, find_packages
 
 setup(
     name='nidhi_sdk',
-    version='0.1.0',
-    description='Nidhi Storage SDK — unified MinIO/S3 client for FastAPI and Django microservices',
+    version='0.2.1',
+    description='Nidhi Storage & DB SDK — unified infrastructure client for FastAPI and Django',
     author='Aadisheshu',
     author_email='safacts001@gmail.com',
     packages=find_packages(),
@@ -11,6 +11,7 @@ setup(
         'minio',
         'boto3',
         'django-storages',
+        'dj-database-url',
     ],
     python_requires='>=3.9',
 )

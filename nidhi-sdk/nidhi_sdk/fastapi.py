@@ -73,3 +73,16 @@ def delete_file_from_nidhi(object_name: str) -> bool:
 
     client.remove_object(bucket_name, object_name)
     return True
+
+def get_nidhi_database_url() -> str:
+    """
+    Returns the Nidhi-provisioned DATABASE_URL.
+    Crashes loudly if it is missing to prevent silent fallback errors.
+    """
+    db_url = os.environ.get('DATABASE_URL')
+    if not db_url:
+        raise RuntimeError(
+            "❌ [Nidhi SDK] Required env var 'DATABASE_URL' is not set. "
+            "Nidhi must provision it before the application starts."
+        )
+    return db_url
