@@ -145,7 +145,7 @@ def reveal_bucket_credentials(request, bucket_id):
 @api_view(['GET'])
 @permission_classes([IsFoundingEngineer])
 def list_bucket_objects(request, bucket_id):
-    """Lists objects in a MinIO bucket."""
+    """Lists objects in a MinIO bucket with optional prefix for folder navigation."""
     bucket = get_object_or_404(StorageBucket, id=bucket_id)
     
     sso_user_id = getattr(request, 'sso_user_id', None)
@@ -159,6 +159,8 @@ def list_bucket_objects(request, bucket_id):
     if not Minio:
         return Response({"error": "MinIO SDK not installed."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
+    prefix = request.GET.get('prefix', '')
+    
     try:
         # Use bucket's endpoint and credentials
         client = Minio(
@@ -168,7 +170,7 @@ def list_bucket_objects(request, bucket_id):
             secure=False
         )
         
-        objects = client.list_objects(bucket.bucket_name)
+        objects = client.list_objects(bucket.bucket_name, prefix=prefix, recursive=False)
         object_list = []
         for obj in objects:
             object_list.append({
@@ -263,6 +265,64 @@ def delete_object(request, bucket_id):
         client.remove_object(bucket.bucket_name, object_name)
         
         return Response({"message": "Object deleted successfully"}, status=status.HTTP_200_OK)
+    except S3Error as e:
+        return Response({"error": f"MinIO error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsFoundingEngineer])
+def create_folder(request, bucket_id):
+    """Creates a folder in a MinIO bucket by creating an empty object with trailing slash."""
+    bucket = get_object_or_404(StorageBucket, id=bucket_id)
+    
+    sso_user_id = getattr(request, 'sso_user_id', None)
+    if not sso_user_id and request.user and request.user.is_authenticated:
+        sso_user_id = request.user.username
+    
+    assignments = EmployeeProductAssignment.objects.filter(sso_user_id=sso_user_id)
+    if assignments.exists() and not assignments.filter(product_id=bucket.product_id).exists():
+        return Response({"error": "Not authorized for this product."}, status=status.HTTP_403_FORBIDDEN)
+    
+    if not Minio:
+        return Response({"error": "MinIO SDK not installed."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    folder_name = request.data.get('folder_name')
+    if not folder_name:
+        return Response({"error": "folder_name is required."}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Ensure folder name ends with /
+    if not folder_name.endswith('/'):
+        folder_name = folder_name + '/'
+    
+    # Add current prefix if navigating in a subfolder
+    current_prefix = request.data.get('prefix', '')
+    if current_prefix and not current_prefix.endswith('/'):
+        current_prefix = current_prefix + '/'
+    
+    full_path = current_prefix + folder_name
+    
+    try:
+        from io import BytesIO
+        
+        client = Minio(
+            bucket.endpoint,
+            access_key=bucket.access_key,
+            secret_key=bucket.secret_key,
+            secure=False
+        )
+        
+        # Create empty object with trailing slash to represent folder
+        client.put_object(
+            bucket.bucket_name,
+            full_path,
+            BytesIO(b''),
+            length=0,
+            content_type='application/x-directory'
+        )
+        
+        return Response({"message": "Folder created successfully", "folder_path": full_path}, status=status.HTTP_200_OK)
     except S3Error as e:
         return Response({"error": f"MinIO error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     except Exception as e:

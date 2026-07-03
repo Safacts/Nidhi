@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { HardDrive, ArrowLeft, RefreshCw, File, Folder, Upload, Download, Trash2, Plus } from 'lucide-react';
+import { HardDrive, ArrowLeft, RefreshCw, File, Folder, Upload, Download, Trash2, Plus, ArrowUp } from 'lucide-react';
 import { ThemeToggle } from '../contexts/ThemeContext';
 import { Logo } from '../components/Logo';
 
@@ -14,6 +14,7 @@ const BucketStudio = () => {
   const [currentPrefix, setCurrentPrefix] = useState('');
   const [selectedObject, setSelectedObject] = useState(null);
   const [uploadFile, setUploadFile] = useState(null);
+  const [newFolderName, setNewFolderName] = useState('');
 
   useEffect(() => {
     fetchBucketInfo();
@@ -48,7 +49,10 @@ const BucketStudio = () => {
     setError(null);
     try {
       const token = localStorage.getItem('sso_token');
-      const res = await fetch(`/nidhi-api/buckets/${id}/objects/`, {
+      const url = currentPrefix 
+        ? `/nidhi-api/buckets/${id}/objects/?prefix=${encodeURIComponent(currentPrefix)}`
+        : `/nidhi-api/buckets/${id}/objects/`;
+      const res = await fetch(url, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (!res.ok) {
@@ -131,6 +135,47 @@ const BucketStudio = () => {
     }
   };
 
+  const handleCreateFolder = async (folderName) => {
+    if (!folderName || !folderName.trim()) return;
+    
+    try {
+      const token = localStorage.getItem('sso_token');
+      const res = await fetch(`/nidhi-api/buckets/${id}/create-folder/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ 
+          folder_name: folderName.trim(),
+          prefix: currentPrefix
+        })
+      });
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "Folder creation failed");
+      }
+      alert('Folder created successfully');
+      fetchObjects();
+    } catch (err) {
+      alert('Folder creation failed: ' + err.message);
+    }
+  };
+
+  const handleNavigateToFolder = (objectName) => {
+    if (objectName.endsWith('/')) {
+      setCurrentPrefix(objectName);
+    }
+  };
+
+  const handleNavigateUp = () => {
+    if (currentPrefix) {
+      const parts = currentPrefix.split('/').filter(p => p);
+      parts.pop();
+      setCurrentPrefix(parts.length > 0 ? parts.join('/') + '/' : '');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 p-8 transition-colors duration-300">
       <header className="mb-8 flex justify-between items-center border-b border-slate-300 dark:border-slate-800 pb-6">
@@ -190,6 +235,24 @@ const BucketStudio = () => {
             <h3 className="text-lg font-semibold mb-4">Actions</h3>
             <div className="space-y-3">
               <div>
+                <label className="block text-sm text-slate-500 dark:text-slate-400 mb-2">Create Folder</label>
+                <div className="flex gap-2">
+                  <input 
+                    type="text" 
+                    value={newFolderName}
+                    onChange={(e) => setNewFolderName(e.target.value)}
+                    placeholder="folder-name"
+                    className="flex-1 text-sm bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded px-3 py-2"
+                  />
+                  <button 
+                    onClick={() => handleCreateFolder(newFolderName)}
+                    className="px-3 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition text-sm"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+              <div>
                 <label className="block text-sm text-slate-500 dark:text-slate-400 mb-2">Upload File</label>
                 <input 
                   type="file" 
@@ -218,11 +281,21 @@ const BucketStudio = () => {
         {/* Objects List */}
         <div className="lg:col-span-3">
           <div className="bg-white dark:bg-slate-800/40 backdrop-blur-md border border-slate-300 dark:border-slate-700 rounded-xl overflow-hidden shadow-xl">
-            <div className="p-4 border-b border-slate-200 dark:border-slate-700/50">
-              <h2 className="text-xl font-semibold text-slate-700 dark:text-slate-300">Objects</h2>
-              <p className="text-sm text-slate-500 dark:text-slate-400">
-                {currentPrefix ? `Path: /${currentPrefix}` : 'Root'}
-              </p>
+            <div className="p-4 border-b border-slate-200 dark:border-slate-700/50 flex justify-between items-center">
+              <div>
+                <h2 className="text-xl font-semibold text-slate-700 dark:text-slate-300">Objects</h2>
+                <p className="text-sm text-slate-500 dark:text-slate-400">
+                  {currentPrefix ? `Path: /${currentPrefix}` : 'Root'}
+                </p>
+              </div>
+              {currentPrefix && (
+                <button 
+                  onClick={handleNavigateUp}
+                  className="flex items-center gap-2 px-3 py-2 text-sm bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded hover:bg-slate-200 dark:hover:bg-slate-600 transition"
+                >
+                  <ArrowUp className="w-4 h-4" /> Up
+                </button>
+              )}
             </div>
             
             {loading ? (
@@ -252,9 +325,16 @@ const BucketStudio = () => {
                 <tbody className="divide-y divide-slate-200 dark:divide-slate-700/50">
                   {objects.map(obj => (
                     <tr key={obj.name} className="hover:bg-slate-50 dark:hover:bg-slate-800/60 transition">
-                      <td className="px-6 py-4 font-semibold flex items-center gap-2">
-                        <File className="w-4 h-4 text-indigo-500" />
-                        {obj.name}
+                      <td 
+                        className="px-6 py-4 font-semibold flex items-center gap-2 cursor-pointer"
+                        onClick={() => handleNavigateToFolder(obj.name)}
+                      >
+                        {obj.is_dir || obj.name.endsWith('/') ? (
+                          <Folder className="w-4 h-4 text-amber-500" />
+                        ) : (
+                          <File className="w-4 h-4 text-indigo-500" />
+                        )}
+                        {obj.name.replace(currentPrefix, '')}
                       </td>
                       <td className="px-6 py-4 text-slate-500 dark:text-slate-400 text-sm">
                         {obj.size ? `${(obj.size / 1024).toFixed(2)} KB` : '-'}
