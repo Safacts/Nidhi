@@ -7,6 +7,8 @@ import AdminDashboard from './pages/AdminDashboard';
 import DatabaseStudio from './pages/DatabaseStudio';
 import BucketStudio from './pages/BucketStudio';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { ToastProvider } from './components/Toast';
+import { ConfirmProvider } from './components/ConfirmDialog';
 import './App.css';
 
 // Simple check for auth token
@@ -18,6 +20,8 @@ const PrivateRoute = ({ children }) => {
 function App() {
   return (
     <ThemeProvider>
+      <ToastProvider>
+      <ConfirmProvider>
       <Router basename="/nidhi">
         <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-sans transition-colors duration-300">
           <Routes>
@@ -52,6 +56,8 @@ function App() {
           </Routes>
         </div>
       </Router>
+      </ConfirmProvider>
+      </ToastProvider>
     </ThemeProvider>
   );
 }

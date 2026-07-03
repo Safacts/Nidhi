@@ -3,10 +3,14 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { HardDrive, ArrowLeft, RefreshCw, File, Folder, Upload, Download, Trash2, Plus, ArrowUp, ChevronRight, ChevronDown, Edit3, Check, X } from 'lucide-react';
 import { ThemeToggle } from '../contexts/ThemeContext';
 import { Logo } from '../components/Logo';
+import { useToast } from '../components/Toast';
+import { useConfirm } from '../components/ConfirmDialog';
 
 const BucketStudio = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { showToast } = useToast();
+  const showConfirm = useConfirm();
   const [objects, setObjects] = useState([]);
   const [bucketInfo, setBucketInfo] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -120,8 +124,9 @@ const BucketStudio = () => {
       }
       fetchObjects();
       fetchTree();
+      showToast('File uploaded successfully', 'success');
     } catch (err) {
-      alert('Upload failed: ' + err.message);
+      showToast('Upload failed: ' + err.message, 'error');
     }
   };
 
@@ -138,12 +143,13 @@ const BucketStudio = () => {
       const downloadUrl = `http://${bucketInfo.endpoint}/${bucketInfo.bucket_name}/${objectName}`;
       window.open(downloadUrl, '_blank');
     } catch (err) {
-      alert('Download failed: ' + err.message);
+      showToast('Download failed: ' + err.message, 'error');
     }
   };
 
   const handleDelete = async (objectName) => {
-    if (!window.confirm(`Delete ${objectName}?`)) return;
+    const ok = await showConfirm(`Delete ${objectName}?`);
+    if (!ok) return;
     
     try {
       const token = localStorage.getItem('sso_token');
@@ -161,8 +167,9 @@ const BucketStudio = () => {
       }
       fetchObjects();
       fetchTree();
+      showToast('Deleted successfully', 'success');
     } catch (err) {
-      alert('Delete failed: ' + err.message);
+      showToast('Delete failed: ' + err.message, 'error');
     }
   };
 
@@ -188,8 +195,9 @@ const BucketStudio = () => {
       }
       fetchObjects();
       fetchTree();
+      showToast('Deleted successfully', 'success');
     } catch (err) {
-      alert('Folder creation failed: ' + err.message);
+      showToast('Delete failed: ' + err.message, 'error');
     }
   };
 
@@ -220,14 +228,16 @@ const BucketStudio = () => {
       setRenamingItem(null);
       fetchObjects();
       fetchTree();
+      showToast('Folder created', 'success');
     } catch (err) {
-      alert('Rename failed: ' + err.message);
+      showToast('Folder creation failed: ' + err.message, 'error');
     }
   };
 
   const handleMultiDelete = async () => {
     if (selectedItems.size === 0) return;
-    if (!window.confirm(`Delete ${selectedItems.size} selected item(s)?`)) return;
+    const ok = await showConfirm(`Delete ${selectedItems.size} selected item(s)?`);
+    if (!ok) return;
     const token = localStorage.getItem('sso_token');
     try {
       const res = await fetch(`/nidhi-api/buckets/${id}/delete-multiple/`, {
@@ -239,8 +249,9 @@ const BucketStudio = () => {
       setSelectedItems(new Set());
       fetchObjects();
       fetchTree();
+      showToast('Deleted successfully', 'success');
     } catch (err) {
-      alert('Delete failed: ' + err.message);
+      showToast('Delete failed: ' + err.message, 'error');
     }
   };
 

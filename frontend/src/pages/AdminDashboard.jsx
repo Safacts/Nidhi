@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Database, Server, Copy, ShieldAlert, Zap, Plus, Package, User, Settings, CreditCard, ChevronDown, LogOut, HardDrive, ExternalLink } from 'lucide-react';
 import { Logo } from '../components/Logo';
 import { ThemeToggle } from '../contexts/ThemeContext';
+import { useToast } from '../components/Toast';
+import { useConfirm } from '../components/ConfirmDialog';
 import { useNavigate } from 'react-router-dom';
 
 const AdminDashboard = () => {
@@ -12,6 +14,8 @@ const AdminDashboard = () => {
   const [buckets, setBuckets] = useState([]);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const navigate = useNavigate();
+  const { showToast } = useToast();
+  const showConfirm = useConfirm();
 
   // Forms state
   const [newProduct, setNewProduct] = useState({ name: '', description: '' });
@@ -73,11 +77,11 @@ const AdminDashboard = () => {
         body: JSON.stringify(newProduct)
       });
       if (res.ok) {
-        alert("Product created!");
+        showToast("Product created!", 'success');
         setNewProduct({ name: '', description: '' });
         fetchProducts();
       } else {
-        alert("Failed to create product.");
+        showToast("Failed to create product.", 'error');
       }
     } catch (e) { console.error(e); }
   };
@@ -92,29 +96,30 @@ const AdminDashboard = () => {
         body: JSON.stringify(payload)
       });
       if (res.ok) {
-        alert("Server added!");
+        showToast("Server added!", 'success');
         setNewServer({ name: '', host: '', port: '5432', root_user: 'postgres', root_password: '', environment_type: 'prod' });
         fetchServers();
       } else {
-        alert("Failed to add server.");
+        showToast("Failed to add server.", 'error');
       }
     } catch (e) { console.error(e); }
   };
 
   const forceReplication = async (id) => {
     const devServer = servers.find(s => s.environment_type === 'dev');
-    if (!devServer) return alert("No dev server found for replication.");
-    if (!window.confirm("Force replication to Dev? This will clone Prod data over.")) return;
+    if (!devServer) { showToast("No dev server found for replication.", 'error'); return; }
+    const ok = await showConfirm("Force replication to Dev? This will clone Prod data over.");
+    if (!ok) return;
     try {
       await fetch(`/nidhi-api/instances/${id}/replicate/`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({ dev_server_id: devServer.id, new_db_name: `repl_${Date.now()}` })
       });
-      alert("Replication task queued in background.");
+      showToast("Replication task queued in background.", 'success');
       fetchInstances();
     } catch (e) {
-      alert("Replication failed.");
+      showToast("Replication failed.", 'error');
     }
   };
 

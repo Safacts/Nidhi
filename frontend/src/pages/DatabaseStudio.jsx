@@ -3,6 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Database, Table, ArrowLeft, RefreshCw, LayoutGrid, Terminal, Plus, Trash2, X, Download, Upload } from 'lucide-react';
 import { ThemeToggle } from '../contexts/ThemeContext';
 import { Logo } from '../components/Logo';
+import { useToast } from '../components/Toast';
+import { useConfirm } from '../components/ConfirmDialog';
 
 const DatabaseStudio = () => {
   const { id } = useParams();
@@ -27,6 +29,9 @@ const DatabaseStudio = () => {
   const [showMigrateModal, setShowMigrateModal] = useState(false);
   const [migrateUri, setMigrateUri] = useState('');
   const [migrating, setMigrating] = useState(false);
+
+  const { showToast } = useToast();
+  const showConfirm = useConfirm();
 
   useEffect(() => {
     fetchTables();
@@ -116,8 +121,9 @@ const DatabaseStudio = () => {
       setShowCreateTableModal(false);
       setNewTableForm({ name: '', columns: [{ name: 'id', type: 'serial', isPk: true }] });
       fetchTables();
+      showToast('Table created successfully', 'success');
     } catch (err) {
-      alert("Failed to create table: " + err.message);
+      showToast("Failed to create table: " + err.message, 'error');
     }
   };
 
@@ -131,26 +137,28 @@ const DatabaseStudio = () => {
       setShowInsertRowModal(false);
       setNewRowData({});
       fetchTableData(selectedTable);
+      showToast('Row inserted successfully', 'success');
     } catch (err) {
-      alert("Failed to insert row: " + err.message);
+      showToast("Failed to insert row: " + err.message, 'error');
     }
   };
 
   const handleDeleteRow = async (row) => {
     if (!tableData.primary_keys || tableData.primary_keys.length === 0) {
-      alert("Cannot delete row visually: No primary key found for this table. Use SQL Editor.");
+      showToast("Cannot delete row visually: No primary key found for this table. Use SQL Editor.", 'warning');
       return;
     }
     const pk = tableData.primary_keys[0]; // simplify to first PK
     const val = row[pk];
-    if (!window.confirm(`Delete row where ${pk} = ${val}?`)) return;
+    const ok = await showConfirm(`Delete row where ${pk} = ${val}?`);
+    if (!ok) return;
     
     try {
       const query = `DELETE FROM "${selectedTable}" WHERE "${pk}" = '${String(val).replace(/'/g, "''")}';`;
       await executeRawQuery(query);
       fetchTableData(selectedTable);
     } catch (err) {
-      alert("Failed to delete row: " + err.message);
+      showToast("Failed to delete row: " + err.message, 'error');
     }
   };
 
@@ -182,7 +190,7 @@ const DatabaseStudio = () => {
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
     } catch (err) {
-      alert("Failed to download backup: " + err.message);
+      showToast("Failed to download backup: " + err.message, 'error');
     }
   };
 
@@ -204,11 +212,11 @@ const DatabaseStudio = () => {
         const errData = await res.json();
         throw new Error(errData.error || "Migration trigger failed");
       }
-      alert("Migration task started! It will run in the background.");
+      showToast("Migration task started! It will run in the background.", 'success');
       setShowMigrateModal(false);
       setMigrateUri('');
     } catch (err) {
-      alert("Migration Error: " + err.message);
+      showToast("Migration Error: " + err.message, 'error');
     } finally {
       setMigrating(false);
     }
