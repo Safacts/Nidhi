@@ -145,7 +145,8 @@ def reveal_bucket_credentials(request, bucket_id):
 @api_view(['GET'])
 @permission_classes([IsFoundingEngineer])
 def list_bucket_objects(request, bucket_id):
-    """Lists objects in a MinIO bucket with optional prefix for folder navigation."""
+    """Lists objects in a MinIO bucket with optional prefix for folder navigation.
+    Supports recursive=true to return full tree structure."""
     bucket = get_object_or_404(StorageBucket, id=bucket_id)
     
     sso_user_id = getattr(request, 'sso_user_id', None)
@@ -160,6 +161,7 @@ def list_bucket_objects(request, bucket_id):
         return Response({"error": "MinIO SDK not installed."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     prefix = request.GET.get('prefix', '')
+    recursive = request.GET.get('recursive', 'false').lower() == 'true'
     
     try:
         # Map localhost to internal docker hostname for backend connection
@@ -175,7 +177,7 @@ def list_bucket_objects(request, bucket_id):
             secure=False
         )
         
-        objects = client.list_objects(bucket.bucket_name, prefix=prefix, recursive=False)
+        objects = client.list_objects(bucket.bucket_name, prefix=prefix, recursive=recursive)
         object_list = []
         for obj in objects:
             object_list.append({
@@ -185,11 +187,51 @@ def list_bucket_objects(request, bucket_id):
                 "is_dir": obj.is_dir
             })
         
+        if recursive:
+            tree = build_tree(object_list)
+            return Response(tree, status=status.HTTP_200_OK)
+        
         return Response(object_list, status=status.HTTP_200_OK)
     except S3Error as e:
         return Response({"error": f"MinIO error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     except Exception as e:
         return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+def build_tree(objects):
+    """Build a nested tree structure from a flat list of MinIO objects."""
+    root = {"name": "", "type": "directory", "children": []}
+    
+    for obj in objects:
+        path = obj["name"]
+        is_dir = obj.get("is_dir", False) or path.endswith("/")
+        parts = [p for p in path.split("/") if p]
+        
+        current = root
+        for i, part in enumerate(parts):
+            is_last = (i == len(parts) - 1)
+            existing = None
+            for child in current["children"]:
+                if child["name"] == part:
+                    existing = child
+                    break
+            
+            if existing:
+                current = existing
+            elif is_last and not is_dir:
+                current["children"].append({
+                    "name": part,
+                    "type": "file",
+                    "size": obj["size"],
+                    "last_modified": obj["last_modified"],
+                    "path": path
+                })
+            else:
+                node = {"name": part, "type": "directory", "children": []}
+                current["children"].append(node)
+                current = node
+    
+    return root
 
 
 @api_view(['POST'])

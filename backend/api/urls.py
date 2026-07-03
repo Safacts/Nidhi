@@ -27,6 +27,7 @@ urlpatterns = [
     path('buckets/<uuid:bucket_id>/objects/', bucket_views.list_bucket_objects, name='list_bucket_objects'),
     path('buckets/<uuid:bucket_id>/upload/', bucket_views.upload_object, name='upload_object'),
     path('buckets/<uuid:bucket_id>/delete/', bucket_views.delete_object, name='delete_object'),
+    path('buckets/<uuid:bucket_id>/create-folder/', bucket_views.create_folder, name='create_folder'),
 
     path('sso/callback/', views.sso_callback, name='sso_callback'),
     path('me/', views.me, name='me'),

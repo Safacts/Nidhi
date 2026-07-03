@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { HardDrive, ArrowLeft, RefreshCw, File, Folder, Upload, Download, Trash2, Plus, ArrowUp } from 'lucide-react';
+import { HardDrive, ArrowLeft, RefreshCw, File, Folder, Upload, Download, Trash2, Plus, ArrowUp, ChevronRight, ChevronDown } from 'lucide-react';
 import { ThemeToggle } from '../contexts/ThemeContext';
 import { Logo } from '../components/Logo';
 
@@ -15,11 +15,31 @@ const BucketStudio = () => {
   const [selectedObject, setSelectedObject] = useState(null);
   const [uploadFile, setUploadFile] = useState(null);
   const [newFolderName, setNewFolderName] = useState('');
+  const [treeData, setTreeData] = useState(null);
+  const [treeLoading, setTreeLoading] = useState(false);
+  const [expandedFolders, setExpandedFolders] = useState(new Set());
 
   useEffect(() => {
     fetchBucketInfo();
     fetchObjects();
   }, [id, currentPrefix]);
+
+  useEffect(() => {
+    fetchTree();
+  }, [id]);
+
+  useEffect(() => {
+    if (treeData && expandedFolders.size === 0) {
+      const firstLevel = treeData.children || [];
+      if (firstLevel.length > 0) {
+        const autoExpand = new Set();
+        firstLevel.forEach(child => {
+          if (child.type === 'directory') autoExpand.add(child.name);
+        });
+        setExpandedFolders(autoExpand);
+      }
+    }
+  }, [treeData]);
 
   const getHeaders = () => {
     const token = localStorage.getItem('sso_token');
@@ -176,6 +196,89 @@ const BucketStudio = () => {
     }
   };
 
+  const fetchTree = async () => {
+    setTreeLoading(true);
+    try {
+      const token = localStorage.getItem('sso_token');
+      const res = await fetch(`/nidhi-api/buckets/${id}/objects/?recursive=true`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTreeData(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch tree:', err);
+    } finally {
+      setTreeLoading(false);
+    }
+  };
+
+  const toggleFolder = (name) => {
+    setExpandedFolders(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) {
+        next.delete(name);
+      } else {
+        next.add(name);
+      }
+      return next;
+    });
+  };
+
+  const handleTreeFolderClick = (prefix) => {
+    setCurrentPrefix(prefix);
+  };
+
+  const TreeView = ({ node, depth = 0 }) => {
+    return (
+      <div>
+        {node.children && node.children.map((child, idx) => {
+          const isDir = child.type === 'directory';
+          const isExpanded = expandedFolders.has(child.name);
+          const childPrefix = child.name.endsWith('/') ? child.name : `${child.name}/`;
+          const isActive = isDir && currentPrefix === childPrefix;
+
+          if (isDir) {
+            return (
+              <div key={idx}>
+                <div
+                  className={`flex items-center gap-1 px-2 py-1 cursor-pointer rounded text-sm transition-colors ${isActive ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/50'}`}
+                  style={{ paddingLeft: `${depth * 16 + 8}px` }}
+                  onClick={() => {
+                    toggleFolder(child.name);
+                    handleTreeFolderClick(childPrefix);
+                  }}
+                >
+                  {isExpanded ? (
+                    <ChevronDown className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+                  ) : (
+                    <ChevronRight className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+                  )}
+                  <Folder className={`w-4 h-4 shrink-0 ${isActive ? 'text-indigo-500' : 'text-amber-500'}`} />
+                  <span className="truncate ml-1">{child.name.replace('/', '')}</span>
+                </div>
+                {isExpanded && child.children && (
+                  <TreeView node={child} depth={depth + 1} />
+                )}
+              </div>
+            );
+          }
+          return (
+            <div
+              key={idx}
+              className="flex items-center gap-1 px-2 py-1 rounded text-sm text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
+              style={{ paddingLeft: `${depth * 16 + 24}px` }}
+            >
+              <File className="w-4 h-4 shrink-0 text-indigo-500/70" />
+              <span className="truncate ml-1">{child.name}</span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 p-8 transition-colors duration-300">
       <header className="mb-8 flex justify-between items-center border-b border-slate-300 dark:border-slate-800 pb-6">
@@ -203,9 +306,32 @@ const BucketStudio = () => {
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-        {/* Bucket Info Sidebar */}
+        {/* Tree Explorer Sidebar */}
         <div className="lg:col-span-1">
-          <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-slate-300 dark:border-slate-700 shadow-xl">
+          <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-slate-300 dark:border-slate-700 shadow-xl">
+            <h3 className="text-lg font-semibold mb-3 flex items-center justify-between">
+              <span>File Tree</span>
+              <button
+                onClick={fetchTree}
+                className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                title="Refresh tree"
+              >
+                <RefreshCw className={`w-4 h-4 text-slate-400 ${treeLoading ? 'animate-spin' : ''}`} />
+              </button>
+            </h3>
+            <div className="max-h-[400px] overflow-y-auto space-y-0.5">
+              {treeLoading && !treeData ? (
+                <p className="text-sm text-slate-500 dark:text-slate-400 p-2">Loading tree...</p>
+              ) : treeData && treeData.children && treeData.children.length > 0 ? (
+                <TreeView node={treeData} depth={0} />
+              ) : (
+                <p className="text-sm text-slate-500 dark:text-slate-400 p-2">Empty bucket</p>
+              )}
+            </div>
+          </div>
+
+          {/* Bucket Info Sidebar */}
+          <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-slate-300 dark:border-slate-700 shadow-xl mt-4">
             <h3 className="text-lg font-semibold mb-4">Bucket Details</h3>
             {bucketInfo ? (
               <div className="space-y-3 text-sm">
