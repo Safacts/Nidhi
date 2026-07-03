@@ -74,6 +74,9 @@ def delete_file_from_nidhi(object_name: str) -> bool:
     client.remove_object(bucket_name, object_name)
     return True
 
+from urllib.parse import urlparse
+from .telegram import send_telegram_alert
+
 def get_nidhi_database_url() -> str:
     """
     Returns the Nidhi-provisioned DATABASE_URL.
@@ -81,8 +84,14 @@ def get_nidhi_database_url() -> str:
     """
     db_url = os.environ.get('DATABASE_URL')
     if not db_url:
-        raise RuntimeError(
+        msg = (
             "❌ [Nidhi SDK] Required env var 'DATABASE_URL' is not set. "
             "Nidhi must provision it before the application starts."
         )
+        send_telegram_alert(f"Application attempted to start without a Nidhi database connection!\n\n`{msg}`")
+        raise RuntimeError(msg)
+        
+    db_name = os.environ.get('DB_NAME', 'Unknown')
+    msg = f"🐘 [Nidhi SDK] Injected PostgreSQL Database: {db_name}"
+    send_telegram_alert(f"✅ Application successfully connected to Nidhi Database!\n\n`{msg}`")
     return db_url

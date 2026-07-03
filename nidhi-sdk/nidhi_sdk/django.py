@@ -26,6 +26,7 @@ def inject_nidhi_storage(settings_module_locals: dict) -> None:
         locals_['INSTALLED_APPS'].append('storages')
     print(f"🪣 [Nidhi SDK] Activated MinIO Storage on bucket: {locals_['AWS_STORAGE_BUCKET_NAME']}")
 
+from .telegram import send_telegram_alert
 def inject_nidhi_database(settings_module_locals: dict) -> None:
     locals_ = settings_module_locals
     db_url = os.environ.get('DATABASE_URL')
@@ -38,6 +39,10 @@ def inject_nidhi_database(settings_module_locals: dict) -> None:
         locals_['DATABASES']['default'] = dj_database_url.config(
             default=db_url, conn_max_age=600, ssl_require=False
         )
-        print(f"🐘 [Nidhi SDK] Injected PostgreSQL Database: {os.environ.get('DB_NAME')}")
+        msg = f"🐘 [Nidhi SDK] Injected PostgreSQL Database: {os.environ.get('DB_NAME')}"
+        print(msg)
+        send_telegram_alert(f"✅ Application successfully connected to Nidhi Database!\n\n`{msg}`")
     elif in_docker:
-        raise RuntimeError("❌ [Nidhi SDK] CRITICAL: Running in Docker but DATABASE_URL is missing. Nidhi must provision it.")
+        msg = "❌ [Nidhi SDK] CRITICAL: Running in Docker but DATABASE_URL is missing. Nidhi must provision it."
+        send_telegram_alert(f"Application attempted to start without a Nidhi database connection!\n\n`{msg}`")
+        raise RuntimeError(msg)
