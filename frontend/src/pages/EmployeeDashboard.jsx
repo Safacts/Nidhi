@@ -591,6 +591,13 @@ const EmployeeDashboard = () => {
                     {bucket.status === 'provisioning' ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Key className="w-4 h-4" />}
                     {bucket.status === 'provisioning' ? 'Provisioning...' : 'Credentials'}
                   </button>
+                  <button 
+                    onClick={() => navigate(`/bucket-studio/${bucket.id}`)}
+                    disabled={bucket.status !== 'available'}
+                    className="flex-1 px-3 py-2.5 bg-purple-50 dark:bg-purple-500/10 text-purple-600 dark:text-purple-400 font-medium rounded-lg hover:bg-purple-100 dark:hover:bg-purple-500/20 disabled:opacity-50 transition flex items-center justify-center gap-2 whitespace-nowrap"
+                  >
+                    Explore
+                  </button>
                 </div>
               </div>
             ))}
