@@ -115,7 +115,31 @@ def auto_provision_instance(request):
             return Response({"error": "Instance is not yet available"}, status=status.HTTP_400_BAD_REQUEST)
         
         db_url = f"postgres://{existing_instance.db_user}:{existing_instance.db_password_temp}@{existing_instance.server.host}:{existing_instance.server.port}/{existing_instance.db_name}"
-        return Response({"database_url": db_url}, status=status.HTTP_200_OK)
+        
+        # Also check for existing bucket
+        # For dev/development: server is None, for prod: server has environment_type
+        if environment in ['dev', 'development']:
+            bucket = StorageBucket.objects.filter(
+                product=product,
+                server__isnull=True
+            ).first()
+        else:
+            bucket = StorageBucket.objects.filter(
+                product=product,
+                server__environment_type=environment
+            ).first()
+        
+        response_data = {"database_url": db_url}
+        
+        if bucket and bucket.status == 'available':
+            response_data["bucket_name"] = bucket.bucket_name
+            response_data["bucket_endpoint"] = bucket.endpoint
+            response_data["bucket_id"] = str(bucket.id)
+            if bucket.access_key and bucket.secret_key:
+                response_data["bucket_access_key"] = bucket.access_key
+                response_data["bucket_secret_key"] = bucket.secret_key
+        
+        return Response(response_data, status=status.HTTP_200_OK)
         
     # 3. Find available server
     server = DatabaseServer.objects.filter(environment_type=environment, is_active=True).first()
@@ -146,14 +170,25 @@ def auto_provision_instance(request):
     provision_database_task.delay(instance.id)
 
     bucket_name = f"{project_slug}-{environment}-media"[:63]
+    
+    # For dev: use local MinIO (server=None), for prod: use VPS MinIO (server=prod_server)
+    bucket_server = None
+    bucket_endpoint = os.environ.get('PUBLIC_MINIO_ENDPOINT', 'localhost:9000')
+    
+    if environment == 'prod':
+        prod_server = DatabaseServer.objects.filter(environment_type='prod', is_active=True).first()
+        if prod_server:
+            bucket_server = prod_server
+            bucket_endpoint = f"{prod_server.host}:9000"
+    
     bucket, _ = StorageBucket.objects.get_or_create(
         bucket_name=bucket_name,
         defaults={
             'product': product,
-            'server': None,
+            'server': bucket_server,
             'access_key': '',
             'secret_key': '',
-            'endpoint': os.environ.get('PUBLIC_MINIO_ENDPOINT', 'localhost:9000'),
+            'endpoint': bucket_endpoint,
             'created_by_sso_id': 'system-auto',
             'status': 'provisioning',
         }
@@ -162,11 +197,22 @@ def auto_provision_instance(request):
         provision_bucket_task.delay(bucket.id)
 
     db_url = f"postgres://{db_user}:{new_password}@{server.host}:{server.port}/{db_name}"
-    return Response({
-        "database_url": db_url,
+    
+    # Return bucket credentials if available
+    bucket_response = {
         "bucket_name": bucket_name,
         "bucket_endpoint": bucket.endpoint,
         "bucket_id": str(bucket.id),
+    }
+    
+    # If bucket is available, include credentials
+    if bucket.status == 'available' and bucket.access_key and bucket.secret_key:
+        bucket_response["bucket_access_key"] = bucket.access_key
+        bucket_response["bucket_secret_key"] = bucket.secret_key
+    
+    return Response({
+        "database_url": db_url,
+        **bucket_response,
     }, status=status.HTTP_202_ACCEPTED)
 
 @api_view(['GET', 'POST'])

@@ -340,17 +340,18 @@ def provision_bucket_task(bucket_id):
         MINIO_ROOT_PASSWORD = os.environ.get('MINIO_ROOT_PASSWORD', 'secure_nidhi_minio_password')
             
         if bucket.server:
+            # Production: Use VPS MinIO
             # We assume MinIO on remote VPS is exposed on port 9000
             endpoint = f"{bucket.server.host}:9000"
             
             # SSH into VPS and ensure MinIO is running
             # We run a docker container named nidhi-minio-plane
-            ssh_cmd = f"sshpass -p '{bucket.server.root_password}' ssh -o StrictHostKeyChecking=no {bucket.server.root_user}@{bucket.server.host} "
+            ssh_cmd = f"ssh -o StrictHostKeyChecking=no {bucket.server.root_user}@{bucket.server.host} "
             
             # Create data directory
-            subprocess.run(ssh_cmd + "'mkdir -p /data/minio'", shell=True)
+            subprocess.run(ssh_cmd + "'mkdir -p /data/minio'", shell=True, check=False)
             
-            # Run docker container
+            # Run docker container if not exists
             docker_cmd = (
                 f"'docker run -d --name nidhi-minio-plane --restart unless-stopped "
                 f"-p 9000:9000 -p 9001:9001 "
@@ -358,12 +359,13 @@ def provision_bucket_task(bucket_id):
                 f"-v /data/minio:/data minio/minio server /data --console-address :9001'"
             )
             # Run command. We ignore errors if container already exists, but we can try to start it just in case
-            subprocess.run(ssh_cmd + docker_cmd, shell=True)
-            subprocess.run(ssh_cmd + "'docker start nidhi-minio-plane'", shell=True)
+            subprocess.run(ssh_cmd + docker_cmd, shell=True, check=False)
+            subprocess.run(ssh_cmd + "'docker start nidhi-minio-plane 2>/dev/null || true'", shell=True, check=False)
             
             # Wait for MinIO to start
             time.sleep(5)
         else:
+            # Development: Use local MinIO container
             endpoint = os.environ.get('MINIO_ENDPOINT', 'minio:9000')
             
         client = Minio(
@@ -392,6 +394,7 @@ def provision_bucket_task(bucket_id):
         bucket.secret_key = MINIO_ROOT_PASSWORD
         bucket.status = 'available'
         bucket.save()
+        print(f"✅ Bucket {bucket.bucket_name} provisioned successfully on {endpoint}")
     except Exception as e:
         print(f"Failed to provision bucket {bucket_id}: {str(e)}")
         bucket = StorageBucket.objects.get(id=bucket_id)
