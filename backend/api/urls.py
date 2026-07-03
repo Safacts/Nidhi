@@ -27,4 +27,5 @@ urlpatterns = [
 
     path('sso/callback/', views.sso_callback, name='sso_callback'),
     path('me/', views.me, name='me'),
+    path('instances/heartbeat/', views.receive_heartbeat, name='receive_heartbeat'),
 ]

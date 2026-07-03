@@ -16,6 +16,9 @@ from django.utils import timezone
 from .models import DatabaseServer, Product, DatabaseInstance, DatabaseBackup, EmployeeProductAssignment, StorageBucket
 from .serializers import DatabaseServerSerializer, ProductSerializer, DatabaseInstanceSerializer, DatabaseBackupSerializer
 from .permissions import IsFoundingEngineer
+import logging
+
+logger = logging.getLogger(__name__)
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -336,3 +339,57 @@ def me(request):
         'username': request.user.username,
         'role': getattr(request.user, 'role', 'employee')
     })
+
+@api_view(['POST'])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def receive_heartbeat(request):
+    """
+    Receives heartbeat from apps to ensure they are using Nidhi-provisioned databases.
+    Protected by NIDHI_APP_API_KEY.
+    """
+    token = request.headers.get('Authorization', '')
+    expected_token = f"Bearer {getattr(settings, 'NIDHI_APP_API_KEY', 'super_secret_app_api_key_123')}"
+    
+    if token != expected_token:
+        return Response({"error": "Unauthorized API key"}, status=status.HTTP_401_UNAUTHORIZED)
+        
+    project_slug = request.data.get('project_slug')
+    environment = request.data.get('environment', 'prod').lower()
+    db_url = request.data.get('db_url')
+    
+    if not all([project_slug, environment, db_url]):
+        return Response({"error": "project_slug, environment, and db_url are required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+    # Check if instance is provisioned
+    instance = DatabaseInstance.objects.filter(
+        product__name=project_slug,
+        server__environment_type=environment,
+        is_deleted=False
+    ).first()
+    
+    if not instance:
+        logger.warning(f"Heartbeat received for unknown instance: {project_slug} ({environment})")
+        return Response({"status": "unknown_instance"}, status=status.HTTP_200_OK)
+        
+    expected_db_url = f"postgres://{instance.db_user}:{instance.db_password_temp}@{instance.server.host}:{instance.server.port}/{instance.db_name}"
+    
+    if db_url != expected_db_url:
+        logger.warning(f"Database mismatch for {project_slug} ({environment}). Expected: {expected_db_url}, Received: {db_url}")
+        
+        # Send Telegram notification
+        telegram_bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
+        telegram_chat_id = os.environ.get('TELEGRAM_CHAT_ID')
+        
+        if telegram_bot_token and telegram_chat_id:
+            message = f"🚨 *Database Mismatch Alert* 🚨\n\n*App:* {project_slug} ({environment})\n*Expected:* {expected_db_url}\n*Actual:* {db_url}"
+            telegram_url = f"https://api.telegram.org/bot{telegram_bot_token}/sendMessage"
+            payload = {'chat_id': telegram_chat_id, 'text': message, 'parse_mode': 'Markdown'}
+            try:
+                requests.post(telegram_url, json=payload, timeout=10)
+            except Exception as e:
+                logger.error(f"Failed to send Telegram notification: {str(e)}")
+                
+        return Response({"status": "mismatch", "expected": expected_db_url}, status=status.HTTP_200_OK)
+        
+    return Response({"status": "ok"}, status=status.HTTP_200_OK)
