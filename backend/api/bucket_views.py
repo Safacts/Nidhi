@@ -198,6 +198,120 @@ def list_bucket_objects(request, bucket_id):
         return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+@api_view(['POST'])
+@permission_classes([IsFoundingEngineer])
+def rename_object(request, bucket_id):
+    """Renames an object in a MinIO bucket by copying to new name and deleting original."""
+    bucket = get_object_or_404(StorageBucket, id=bucket_id)
+
+    sso_user_id = getattr(request, 'sso_user_id', None)
+    if not sso_user_id and request.user and request.user.is_authenticated:
+        sso_user_id = request.user.username
+
+    assignments = EmployeeProductAssignment.objects.filter(sso_user_id=sso_user_id)
+    if assignments.exists() and not assignments.filter(product_id=bucket.product_id).exists():
+        return Response({"error": "Not authorized for this product."}, status=status.HTTP_403_FORBIDDEN)
+
+    if not Minio:
+        return Response({"error": "MinIO SDK not installed."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    object_name = request.data.get('object_name')
+    new_object_name = request.data.get('new_object_name')
+    if not object_name or not new_object_name:
+        return Response({"error": "object_name and new_object_name are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        internal_endpoint = bucket.endpoint
+        if internal_endpoint.startswith('localhost:'):
+            internal_endpoint = MINIO_ENDPOINT
+
+        client = Minio(
+            internal_endpoint,
+            access_key=bucket.access_key,
+            secret_key=bucket.secret_key,
+            secure=False
+        )
+
+        is_dir = object_name.endswith('/')
+
+        if is_dir:
+            # Rename a folder: copy all objects under prefix, then remove originals
+            objects_to_move = list(client.list_objects(bucket.bucket_name, prefix=object_name, recursive=True))
+            for obj in objects_to_move:
+                new_key = obj.object_name.replace(object_name, new_object_name, 1)
+                client.copy_object(bucket.bucket_name, new_key, f"{bucket.bucket_name}/{obj.object_name}")
+                client.remove_object(bucket.bucket_name, obj.object_name)
+        else:
+            # Rename a single file
+            client.copy_object(bucket.bucket_name, new_object_name, f"{bucket.bucket_name}/{object_name}")
+            client.remove_object(bucket.bucket_name, object_name)
+
+        return Response({"message": "Renamed successfully"}, status=status.HTTP_200_OK)
+    except S3Error as e:
+        return Response({"error": f"MinIO error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsFoundingEngineer])
+def delete_multiple_objects(request, bucket_id):
+    """Deletes multiple objects from a MinIO bucket."""
+    bucket = get_object_or_404(StorageBucket, id=bucket_id)
+
+    sso_user_id = getattr(request, 'sso_user_id', None)
+    if not sso_user_id and request.user and request.user.is_authenticated:
+        sso_user_id = request.user.username
+
+    assignments = EmployeeProductAssignment.objects.filter(sso_user_id=sso_user_id)
+    if assignments.exists() and not assignments.filter(product_id=bucket.product_id).exists():
+        return Response({"error": "Not authorized for this product."}, status=status.HTTP_403_FORBIDDEN)
+
+    if not Minio:
+        return Response({"error": "MinIO SDK not installed."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    object_names = request.data.get('object_names', [])
+    if not object_names or not isinstance(object_names, list):
+        return Response({"error": "object_names must be a non-empty list."}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        internal_endpoint = bucket.endpoint
+        if internal_endpoint.startswith('localhost:'):
+            internal_endpoint = MINIO_ENDPOINT
+
+        client = Minio(
+            internal_endpoint,
+            access_key=bucket.access_key,
+            secret_key=bucket.secret_key,
+            secure=False
+        )
+
+        errors = []
+        deleted = []
+        for object_name in object_names:
+            try:
+                if object_name.endswith('/'):
+                    # Delete folder recursively
+                    objects_in_folder = list(client.list_objects(bucket.bucket_name, prefix=object_name, recursive=True))
+                    for obj in objects_in_folder:
+                        client.remove_object(bucket.bucket_name, obj.object_name)
+                    deleted.append(object_name)
+                else:
+                    client.remove_object(bucket.bucket_name, object_name)
+                    deleted.append(object_name)
+            except Exception as e:
+                errors.append({"object": object_name, "error": str(e)})
+
+        return Response({
+            "deleted": deleted,
+            "errors": errors
+        }, status=status.HTTP_200_OK)
+    except S3Error as e:
+        return Response({"error": f"MinIO error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 def build_tree(objects):
     """Build a nested tree structure from a flat list of MinIO objects."""
     root = {"name": "", "type": "directory", "children": []}
