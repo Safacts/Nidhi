@@ -129,7 +129,9 @@ def reveal_bucket_credentials(request, bucket_id):
     sso_user_id = getattr(request, 'sso_user_id', None)
     if not sso_user_id and request.user and request.user.is_authenticated:
         sso_user_id = request.user.username
-    if not EmployeeProductAssignment.objects.filter(sso_user_id=sso_user_id, product_id=bucket.product_id).exists():
+    
+    assignments = EmployeeProductAssignment.objects.filter(sso_user_id=sso_user_id)
+    if assignments.exists() and not assignments.filter(product_id=bucket.product_id).exists():
         return Response({"error": "Not authorized for this product."}, status=status.HTTP_403_FORBIDDEN)
         
     return Response({
