@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Database, Server, Copy, ShieldAlert, Zap, Plus, Package, User, Settings, CreditCard, ChevronDown, LogOut } from 'lucide-react';
+import { Database, Server, Copy, ShieldAlert, Zap, Plus, Package, User, Settings, CreditCard, ChevronDown, LogOut, HardDrive } from 'lucide-react';
 import { Logo } from '../components/Logo';
 import { ThemeToggle } from '../contexts/ThemeContext';
 import { useNavigate } from 'react-router-dom';
@@ -9,6 +9,7 @@ const AdminDashboard = () => {
   const [servers, setServers] = useState([]);
   const [products, setProducts] = useState([]);
   const [instances, setInstances] = useState([]);
+  const [buckets, setBuckets] = useState([]);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const navigate = useNavigate();
 
@@ -20,6 +21,7 @@ const AdminDashboard = () => {
     fetchServers();
     fetchInstances();
     fetchProducts();
+    fetchBuckets();
   }, []);
 
   const getHeaders = () => {
@@ -50,6 +52,14 @@ const AdminDashboard = () => {
     try {
       const res = await fetch(`/nidhi-api/products/`, { headers: getHeaders() });
       if (res.ok) setProducts(await res.json());
+      else if (res.status === 401 || res.status === 403) navigate('/login');
+    } catch (e) { console.error(e); }
+  };
+
+  const fetchBuckets = async () => {
+    try {
+      const res = await fetch(`/nidhi-api/buckets/`, { headers: getHeaders() });
+      if (res.ok) setBuckets(await res.json());
       else if (res.status === 401 || res.status === 403) navigate('/login');
     } catch (e) { console.error(e); }
   };
@@ -191,6 +201,12 @@ const AdminDashboard = () => {
         >
           <Package className="inline w-4 h-4 mr-2" /> Products Config
         </button>
+        <button 
+          onClick={() => setActiveTab('buckets')}
+          className={`px-4 py-2 rounded-lg font-medium transition-colors ${activeTab === 'buckets' ? 'bg-slate-800 text-white dark:bg-slate-700' : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-300 dark:hover:bg-slate-700'}`}
+        >
+          <HardDrive className="inline w-4 h-4 mr-2" /> Storage Buckets
+        </button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
@@ -299,6 +315,53 @@ const AdminDashboard = () => {
               </div>
             </div>
           </>
+        )}
+
+        {activeTab === 'buckets' && (
+          <div className="lg:col-span-4">
+            <h2 className="text-xl font-semibold mb-4 text-slate-700 dark:text-slate-300">Storage Buckets</h2>
+            <div className="bg-white dark:bg-slate-800/40 backdrop-blur-md border border-slate-300 dark:border-slate-700 rounded-xl overflow-hidden shadow-xl">
+              <table className="w-full text-left">
+                <thead className="bg-slate-100 dark:bg-slate-800/80 text-slate-500 dark:text-slate-400 text-xs uppercase tracking-wider">
+                  <tr>
+                    <th className="px-6 py-4">Bucket Name</th>
+                    <th className="px-6 py-4">Product</th>
+                    <th className="px-6 py-4">Location</th>
+                    <th className="px-6 py-4">Endpoint</th>
+                    <th className="px-6 py-4">Status</th>
+                    <th className="px-6 py-4">Created</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-700/50">
+                  {buckets.map(bucket => (
+                    <tr key={bucket.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/60 transition">
+                      <td className="px-6 py-4 font-semibold">{bucket.bucket_name}</td>
+                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{bucket.product__name}</td>
+                      <td className="px-6 py-4">
+                        {bucket.server__name ? (
+                          <span className="text-sm">
+                            <span className={`px-2 py-1 text-xs rounded border ${bucket.server__environment_type === 'prod' ? 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20' : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'}`}>
+                              {bucket.server__environment_type.toUpperCase()}
+                            </span>
+                            <span className="ml-2 text-slate-500 dark:text-slate-400">{bucket.server__host}</span>
+                          </span>
+                        ) : (
+                          <span className="text-sm text-slate-500 dark:text-slate-400">Local Dev Server</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400 text-sm">{bucket.endpoint}</td>
+                      <td className="px-6 py-4">
+                        <span className={`px-2 py-1 text-xs rounded-full border ${bucket.status === 'available' ? 'bg-[#4ade80]/20 text-emerald-600 dark:text-[#98FF98] border-[#4ade80]/40' : 'bg-red-500/10 text-red-500 dark:text-red-400 border-red-500/20'}`}>
+                          {bucket.status.toUpperCase()}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400 text-sm">{new Date(bucket.created_at).toLocaleDateString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         )}
 
       </div>

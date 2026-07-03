@@ -105,7 +105,8 @@ def list_buckets(request):
     product_ids = [a.product_id for a in assignments]
     
     buckets = StorageBucket.objects.filter(product_id__in=product_ids).values(
-        'id', 'bucket_name', 'endpoint', 'status', 'created_at', 'product__name'
+        'id', 'bucket_name', 'endpoint', 'status', 'created_at', 'product__name',
+        'server__name', 'server__host', 'server__environment_type'
     )
     
     return Response(list(buckets), status=status.HTTP_200_OK)
