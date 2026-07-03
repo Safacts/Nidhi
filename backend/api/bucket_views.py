@@ -162,9 +162,14 @@ def list_bucket_objects(request, bucket_id):
     prefix = request.GET.get('prefix', '')
     
     try:
-        # Use bucket's endpoint and credentials
+        # Map localhost to internal docker hostname for backend connection
+        internal_endpoint = bucket.endpoint
+        if internal_endpoint.startswith('localhost:'):
+            internal_endpoint = MINIO_ENDPOINT
+            
+        # Use internal endpoint but bucket's credentials
         client = Minio(
-            bucket.endpoint,
+            internal_endpoint,
             access_key=bucket.access_key,
             secret_key=bucket.secret_key,
             secure=False
@@ -211,8 +216,12 @@ def upload_object(request, bucket_id):
     object_name = request.data.get('object_name', file_obj.name)
     
     try:
+        internal_endpoint = bucket.endpoint
+        if internal_endpoint.startswith('localhost:'):
+            internal_endpoint = MINIO_ENDPOINT
+            
         client = Minio(
-            bucket.endpoint,
+            internal_endpoint,
             access_key=bucket.access_key,
             secret_key=bucket.secret_key,
             secure=False
@@ -255,8 +264,12 @@ def delete_object(request, bucket_id):
         return Response({"error": "object_name is required."}, status=status.HTTP_400_BAD_REQUEST)
     
     try:
+        internal_endpoint = bucket.endpoint
+        if internal_endpoint.startswith('localhost:'):
+            internal_endpoint = MINIO_ENDPOINT
+            
         client = Minio(
-            bucket.endpoint,
+            internal_endpoint,
             access_key=bucket.access_key,
             secret_key=bucket.secret_key,
             secure=False
@@ -306,8 +319,12 @@ def create_folder(request, bucket_id):
     try:
         from io import BytesIO
         
+        internal_endpoint = bucket.endpoint
+        if internal_endpoint.startswith('localhost:'):
+            internal_endpoint = MINIO_ENDPOINT
+            
         client = Minio(
-            bucket.endpoint,
+            internal_endpoint,
             access_key=bucket.access_key,
             secret_key=bucket.secret_key,
             secure=False
