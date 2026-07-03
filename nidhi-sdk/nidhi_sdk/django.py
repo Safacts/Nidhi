@@ -39,7 +39,11 @@ def inject_nidhi_database(settings_module_locals: dict) -> None:
         locals_['DATABASES']['default'] = dj_database_url.config(
             default=db_url, conn_max_age=600, ssl_require=False
         )
-        msg = f"🐘 [Nidhi SDK] Injected PostgreSQL Database: {os.environ.get('DB_NAME')}"
+        from urllib.parse import urlparse
+        db_name = os.environ.get('DB_NAME')
+        if not db_name:
+            db_name = urlparse(db_url).path.lstrip('/')
+        msg = f"🐘 [Nidhi SDK] Injected PostgreSQL Database: {db_name}"
         print(msg)
         send_telegram_alert(f"✅ Application successfully connected to Nidhi Database!\n\n`{msg}`")
     elif in_docker:

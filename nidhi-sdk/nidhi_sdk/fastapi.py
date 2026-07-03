@@ -91,7 +91,9 @@ def get_nidhi_database_url() -> str:
         send_telegram_alert(f"Application attempted to start without a Nidhi database connection!\n\n`{msg}`")
         raise RuntimeError(msg)
         
-    db_name = os.environ.get('DB_NAME', 'Unknown')
+    db_name = os.environ.get('DB_NAME')
+    if not db_name:
+        db_name = urlparse(db_url).path.lstrip('/')
     msg = f"🐘 [Nidhi SDK] Injected PostgreSQL Database: {db_name}"
     send_telegram_alert(f"✅ Application successfully connected to Nidhi Database!\n\n`{msg}`")
     return db_url
