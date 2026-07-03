@@ -45,8 +45,14 @@ def inject_nidhi_database(settings_module_locals: dict) -> None:
             db_name = urlparse(db_url).path.lstrip('/')
         msg = f"🐘 [Nidhi SDK] Injected PostgreSQL Database: {db_name}"
         print(msg)
-        send_telegram_alert(f"✅ Application successfully connected to Nidhi Database!\n\n`{msg}`")
+        if not os.path.exists('/tmp/.nidhi_notified'):
+            send_telegram_alert(f"✅ Application successfully connected to Nidhi Database!\n\n`{msg}`")
+            with open('/tmp/.nidhi_notified', 'w') as f:
+                f.write('1')
     elif in_docker:
         msg = "❌ [Nidhi SDK] CRITICAL: Running in Docker but DATABASE_URL is missing. Nidhi must provision it."
-        send_telegram_alert(f"Application attempted to start without a Nidhi database connection!\n\n`{msg}`")
+        if not os.path.exists('/tmp/.nidhi_notified_err'):
+            send_telegram_alert(f"Application attempted to start without a Nidhi database connection!\n\n`{msg}`")
+            with open('/tmp/.nidhi_notified_err', 'w') as f:
+                f.write('1')
         raise RuntimeError(msg)

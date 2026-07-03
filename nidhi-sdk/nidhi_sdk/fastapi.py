@@ -88,12 +88,20 @@ def get_nidhi_database_url() -> str:
             "❌ [Nidhi SDK] Required env var 'DATABASE_URL' is not set. "
             "Nidhi must provision it before the application starts."
         )
-        send_telegram_alert(f"Application attempted to start without a Nidhi database connection!\n\n`{msg}`")
+        if not os.path.exists('/tmp/.nidhi_notified_err'):
+            send_telegram_alert(f"Application attempted to start without a Nidhi database connection!\n\n`{msg}`")
+            with open('/tmp/.nidhi_notified_err', 'w') as f:
+                f.write('1')
         raise RuntimeError(msg)
         
     db_name = os.environ.get('DB_NAME')
     if not db_name:
         db_name = urlparse(db_url).path.lstrip('/')
     msg = f"🐘 [Nidhi SDK] Injected PostgreSQL Database: {db_name}"
-    send_telegram_alert(f"✅ Application successfully connected to Nidhi Database!\n\n`{msg}`")
+    
+    if not os.path.exists('/tmp/.nidhi_notified'):
+        send_telegram_alert(f"✅ Application successfully connected to Nidhi Database!\n\n`{msg}`")
+        with open('/tmp/.nidhi_notified', 'w') as f:
+            f.write('1')
+            
     return db_url
