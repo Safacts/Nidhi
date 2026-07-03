@@ -140,3 +140,131 @@ def reveal_bucket_credentials(request, bucket_id):
         "access_key": bucket.access_key,
         "secret_key": bucket.secret_key
     }, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([IsFoundingEngineer])
+def list_bucket_objects(request, bucket_id):
+    """Lists objects in a MinIO bucket."""
+    bucket = get_object_or_404(StorageBucket, id=bucket_id)
+    
+    sso_user_id = getattr(request, 'sso_user_id', None)
+    if not sso_user_id and request.user and request.user.is_authenticated:
+        sso_user_id = request.user.username
+    
+    assignments = EmployeeProductAssignment.objects.filter(sso_user_id=sso_user_id)
+    if assignments.exists() and not assignments.filter(product_id=bucket.product_id).exists():
+        return Response({"error": "Not authorized for this product."}, status=status.HTTP_403_FORBIDDEN)
+    
+    if not Minio:
+        return Response({"error": "MinIO SDK not installed."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    try:
+        # Use bucket's endpoint and credentials
+        client = Minio(
+            bucket.endpoint,
+            access_key=bucket.access_key,
+            secret_key=bucket.secret_key,
+            secure=False
+        )
+        
+        objects = client.list_objects(bucket.bucket_name)
+        object_list = []
+        for obj in objects:
+            object_list.append({
+                "name": obj.object_name,
+                "size": obj.size,
+                "last_modified": obj.last_modified.isoformat() if obj.last_modified else None,
+                "is_dir": obj.is_dir
+            })
+        
+        return Response(object_list, status=status.HTTP_200_OK)
+    except S3Error as e:
+        return Response({"error": f"MinIO error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsFoundingEngineer])
+def upload_object(request, bucket_id):
+    """Uploads a file to a MinIO bucket."""
+    bucket = get_object_or_404(StorageBucket, id=bucket_id)
+    
+    sso_user_id = getattr(request, 'sso_user_id', None)
+    if not sso_user_id and request.user and request.user.is_authenticated:
+        sso_user_id = request.user.username
+    
+    assignments = EmployeeProductAssignment.objects.filter(sso_user_id=sso_user_id)
+    if assignments.exists() and not assignments.filter(product_id=bucket.product_id).exists():
+        return Response({"error": "Not authorized for this product."}, status=status.HTTP_403_FORBIDDEN)
+    
+    if not Minio:
+        return Response({"error": "MinIO SDK not installed."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    if 'file' not in request.FILES:
+        return Response({"error": "No file provided."}, status=status.HTTP_400_BAD_REQUEST)
+    
+    file_obj = request.FILES['file']
+    object_name = request.data.get('object_name', file_obj.name)
+    
+    try:
+        client = Minio(
+            bucket.endpoint,
+            access_key=bucket.access_key,
+            secret_key=bucket.secret_key,
+            secure=False
+        )
+        
+        client.put_object(
+            bucket.bucket_name,
+            object_name,
+            file_obj,
+            length=file_obj.size,
+            content_type=file_obj.content_type
+        )
+        
+        return Response({"message": "File uploaded successfully", "object_name": object_name}, status=status.HTTP_200_OK)
+    except S3Error as e:
+        return Response({"error": f"MinIO error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['DELETE'])
+@permission_classes([IsFoundingEngineer])
+def delete_object(request, bucket_id):
+    """Deletes an object from a MinIO bucket."""
+    bucket = get_object_or_404(StorageBucket, id=bucket_id)
+    
+    sso_user_id = getattr(request, 'sso_user_id', None)
+    if not sso_user_id and request.user and request.user.is_authenticated:
+        sso_user_id = request.user.username
+    
+    assignments = EmployeeProductAssignment.objects.filter(sso_user_id=sso_user_id)
+    if assignments.exists() and not assignments.filter(product_id=bucket.product_id).exists():
+        return Response({"error": "Not authorized for this product."}, status=status.HTTP_403_FORBIDDEN)
+    
+    if not Minio:
+        return Response({"error": "MinIO SDK not installed."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    object_name = request.data.get('object_name')
+    if not object_name:
+        return Response({"error": "object_name is required."}, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        client = Minio(
+            bucket.endpoint,
+            access_key=bucket.access_key,
+            secret_key=bucket.secret_key,
+            secure=False
+        )
+        
+        client.remove_object(bucket.bucket_name, object_name)
+        
+        return Response({"message": "Object deleted successfully"}, status=status.HTTP_200_OK)
+    except S3Error as e:
+        return Response({"error": f"MinIO error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+

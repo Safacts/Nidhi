@@ -13,6 +13,7 @@ const BucketStudio = () => {
   const [error, setError] = useState(null);
   const [currentPrefix, setCurrentPrefix] = useState('');
   const [selectedObject, setSelectedObject] = useState(null);
+  const [uploadFile, setUploadFile] = useState(null);
 
   useEffect(() => {
     fetchBucketInfo();
@@ -46,30 +47,88 @@ const BucketStudio = () => {
     setLoading(true);
     setError(null);
     try {
-      // Note: This would require a backend endpoint to list MinIO objects
-      // For now, we'll show a placeholder
-      setObjects([]);
+      const token = localStorage.getItem('sso_token');
+      const res = await fetch(`/nidhi-api/buckets/${id}/objects/`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "Failed to fetch objects");
+      }
+      const data = await res.json();
+      setObjects(data);
     } catch (err) {
       setError("Failed to fetch objects: " + err.message);
+      setObjects([]);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleUpload = async () => {
-    // Placeholder for upload functionality
-    alert('Upload functionality requires MinIO SDK integration');
+  const handleUpload = async (file) => {
+    if (!file) return;
+    
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('object_name', file.name);
+    
+    try {
+      const token = localStorage.getItem('sso_token');
+      const res = await fetch(`/nidhi-api/buckets/${id}/upload/`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+        body: formData
+      });
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "Upload failed");
+      }
+      alert('File uploaded successfully');
+      fetchObjects();
+    } catch (err) {
+      alert('Upload failed: ' + err.message);
+    }
   };
 
   const handleDownload = async (objectName) => {
-    // Placeholder for download functionality
-    alert(`Download ${objectName} - requires MinIO SDK integration`);
+    try {
+      const token = localStorage.getItem('sso_token');
+      const res = await fetch(`/nidhi-api/buckets/${id}/reveal/`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Failed to get bucket credentials');
+      const bucketInfo = await res.json();
+      
+      // Generate presigned URL for download (simplified - in production use backend presigned URL)
+      const downloadUrl = `http://${bucketInfo.endpoint}/${bucketInfo.bucket_name}/${objectName}`;
+      window.open(downloadUrl, '_blank');
+    } catch (err) {
+      alert('Download failed: ' + err.message);
+    }
   };
 
   const handleDelete = async (objectName) => {
     if (!window.confirm(`Delete ${objectName}?`)) return;
-    // Placeholder for delete functionality
-    alert(`Delete ${objectName} - requires MinIO SDK integration`);
+    
+    try {
+      const token = localStorage.getItem('sso_token');
+      const res = await fetch(`/nidhi-api/buckets/${id}/delete/`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ object_name: objectName })
+      });
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "Delete failed");
+      }
+      alert('Object deleted successfully');
+      fetchObjects();
+    } catch (err) {
+      alert('Delete failed: ' + err.message);
+    }
   };
 
   return (
@@ -129,13 +188,23 @@ const BucketStudio = () => {
 
           <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-slate-300 dark:border-slate-700 shadow-xl mt-4">
             <h3 className="text-lg font-semibold mb-4">Actions</h3>
-            <div className="space-y-2">
-              <button 
-                onClick={handleUpload}
-                className="w-full flex items-center gap-3 px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition"
-              >
-                <Upload className="w-4 h-4" /> Upload File
-              </button>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm text-slate-500 dark:text-slate-400 mb-2">Upload File</label>
+                <input 
+                  type="file" 
+                  onChange={(e) => setUploadFile(e.target.files[0])}
+                  className="w-full text-sm text-slate-500 dark:text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 dark:file:bg-indigo-900/20 dark:file:text-indigo-400"
+                />
+                {uploadFile && (
+                  <button 
+                    onClick={() => handleUpload(uploadFile)}
+                    className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition"
+                  >
+                    <Upload className="w-4 h-4" /> Upload {uploadFile.name}
+                  </button>
+                )}
+              </div>
               <button 
                 onClick={fetchObjects}
                 className="w-full flex items-center gap-3 px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition"
