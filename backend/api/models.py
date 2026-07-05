@@ -8,7 +8,7 @@ class DatabaseServer(models.Model):
     port = models.IntegerField(default=5432)
     root_user = models.CharField(max_length=100, default='postgres')
     root_password = models.CharField(max_length=255) # In production, this should be encrypted/vaulted
-    environment_type = models.CharField(max_length=50, choices=[('dev', 'Development'), ('prod', 'Production')])
+    environment_type = models.CharField(max_length=50, choices=[('development', 'Development'), ('production', 'Production')])
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -111,3 +111,19 @@ class StorageBucket(models.Model):
 
     def __str__(self):
         return f"Bucket {self.bucket_name} ({self.status})"
+
+class SystemAlert(models.Model):
+    """System alerts for Nidhi dashboard."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    title = models.CharField(max_length=255)
+    message = models.TextField()
+    level = models.CharField(max_length=50, choices=[
+        ('info', 'Info'),
+        ('warning', 'Warning'),
+        ('error', 'Error')
+    ], default='info')
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.level.upper()}: {self.title}"

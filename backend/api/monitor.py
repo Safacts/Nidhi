@@ -11,7 +11,7 @@ _alert_state = {}
 
 def monitoring_loop():
     """Runs infinitely in a background thread."""
-    from .models import DatabaseInstance
+    from .models import DatabaseInstance, SystemAlert
     from .tasks import send_telegram_alert
     import psycopg2
 
@@ -51,6 +51,11 @@ def monitoring_loop():
                                     f"It may have fallen back to SQLite or a hardcoded database!"
                                 )
                                 send_telegram_alert(msg)
+                                SystemAlert.objects.create(
+                                    title=f"Database Disconnected: {instance.db_name}",
+                                    message=f"Application database {instance.db_name} on server {server.name} has 0 active connections. It may have fallen back to SQLite or a hardcoded database.",
+                                    level="error"
+                                )
                                 logger.warning(f"0 connections detected for {instance.db_name}. Alert sent.")
                                 _alert_state[instance.db_name] = True
                         else:
@@ -62,6 +67,11 @@ def monitoring_loop():
                                     f"({connections} active connections)."
                                 )
                                 send_telegram_alert(msg)
+                                SystemAlert.objects.create(
+                                    title=f"Database Recovered: {instance.db_name}",
+                                    message=f"Application database {instance.db_name} has reconnected ({connections} active connections).",
+                                    level="info"
+                                )
                                 logger.info(f"{instance.db_name} reconnected.")
                                 _alert_state[instance.db_name] = False
                                 

@@ -70,7 +70,7 @@ def auto_register_server(request):
             port=data.get('port', 5432),
             root_user=data.get('root_user', 'postgres'),
             root_password=data.get('root_password'),
-            environment_type='prod',
+            environment_type='production',
             is_active=True
         )
         return Response({"message": "Server registered successfully", "id": server.id}, status=status.HTTP_201_CREATED)
@@ -92,7 +92,7 @@ def auto_provision_instance(request):
         return Response({"error": "Unauthorized API key"}, status=status.HTTP_401_UNAUTHORIZED)
         
     project_slug = request.data.get('project_slug', '').lower().replace(' ', '_')
-    environment = request.data.get('environment', 'prod').lower()
+    environment = request.data.get('environment', 'production').lower()
     
     if not project_slug:
         return Response({"error": "project_slug is required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -120,7 +120,7 @@ def auto_provision_instance(request):
         
         # Also check for existing bucket
         # For dev/development: server is None, for prod: server has environment_type
-        if environment in ['dev', 'development']:
+        if environment == 'development':
             bucket = StorageBucket.objects.filter(
                 product=product,
                 server__isnull=True
@@ -177,8 +177,8 @@ def auto_provision_instance(request):
     bucket_server = None
     bucket_endpoint = os.environ.get('PUBLIC_MINIO_ENDPOINT', 'localhost:9000')
     
-    if environment == 'prod':
-        prod_server = DatabaseServer.objects.filter(environment_type='prod', is_active=True).first()
+    if environment == 'production':
+        prod_server = DatabaseServer.objects.filter(environment_type='production', is_active=True).first()
         if prod_server:
             bucket_server = prod_server
             bucket_endpoint = f"{prod_server.host}:9000"
@@ -384,3 +384,31 @@ def me(request):
         'username': request.user.username,
         'role': getattr(request.user, 'role', 'employee')
     })
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def alert_list(request):
+    from .models import SystemAlert
+    from .serializers import SystemAlertSerializer
+    alerts = SystemAlert.objects.all().order_by('-created_at')[:50]
+    serializer = SystemAlertSerializer(alerts, many=True)
+    return Response(serializer.data)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def alert_mark_read(request, alert_id):
+    from .models import SystemAlert
+    try:
+        alert = SystemAlert.objects.get(id=alert_id)
+        alert.is_read = True
+        alert.save()
+        return Response({"status": "marked read"}, status=status.HTTP_200_OK)
+    except SystemAlert.DoesNotExist:
+        return Response({"error": "not found"}, status=status.HTTP_404_NOT_FOUND)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def alert_mark_all_read(request):
+    from .models import SystemAlert
+    SystemAlert.objects.filter(is_read=False).update(is_read=True)
+    return Response({"status": "all marked read"}, status=status.HTTP_200_OK)

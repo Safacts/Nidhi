@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Database, Server, Copy, ShieldAlert, Zap, Plus, Package, User, Settings, CreditCard, ChevronDown, LogOut, HardDrive, ExternalLink } from 'lucide-react';
 import { Logo } from '../components/Logo';
 import { ThemeToggle } from '../contexts/ThemeContext';
+import { NotificationBell } from '../components/NotificationBell';
 import { useToast } from '../components/Toast';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useNavigate } from 'react-router-dom';
@@ -137,6 +138,7 @@ const AdminDashboard = () => {
           </div>
         </div>
         <div className="flex gap-4 items-center">
+          <NotificationBell />
           <ThemeToggle />
           
           <button 

@@ -33,4 +33,9 @@ urlpatterns = [
 
     path('sso/callback/', views.sso_callback, name='sso_callback'),
     path('me/', views.me, name='me'),
+
+    # Alert Endpoints
+    path('alerts/', views.alert_list, name='alert_list'),
+    path('alerts/<uuid:alert_id>/read/', views.alert_mark_read, name='alert_mark_read'),
+    path('alerts/read-all/', views.alert_mark_all_read, name='alert_mark_all_read'),
 ]

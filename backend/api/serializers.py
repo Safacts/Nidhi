@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import DatabaseServer, Product, EmployeeProductAssignment, DatabaseInstance, DatabaseBackup
+from .models import DatabaseServer, Product, EmployeeProductAssignment, DatabaseInstance, DatabaseBackup, SystemAlert
 
 class DatabaseServerSerializer(serializers.ModelSerializer):
     root_password = serializers.CharField(write_only=True)
@@ -42,3 +42,7 @@ class DatabaseBackupSerializer(serializers.ModelSerializer):
         model = DatabaseBackup
         fields = ['id', 'instance', 's3_path', 'file_size_bytes', 'status', 'created_at']
         read_only_fields = ['id', 'created_at']
+class SystemAlertSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SystemAlert
+        fields = '__all__'
