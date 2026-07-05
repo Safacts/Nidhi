@@ -119,20 +119,44 @@ def send_telegram_backup_notification(backup_id):
         logger.error(f"Telegram notification failed: {str(e)}")
 
 
+def send_telegram_alert(message: str):
+    """Generic function to send a Telegram alert message."""
+    telegram_bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
+    telegram_chat_id = os.environ.get('TELEGRAM_CHAT_ID')
+    
+    if not telegram_bot_token or not telegram_chat_id:
+        logger.info("Telegram credentials not configured, skipping alert")
+        return
+        
+    telegram_url = f"https://api.telegram.org/bot{telegram_bot_token}/sendMessage"
+    payload = {
+        'chat_id': telegram_chat_id,
+        'text': message,
+        'parse_mode': 'Markdown'
+    }
+    
+    try:
+        response = requests.post(telegram_url, json=payload, timeout=10)
+        if response.status_code != 200:
+            logger.error(f"Failed to send Telegram alert: {response.text}")
+    except Exception as e:
+        logger.error(f"Telegram alert request failed: {str(e)}")
+
+
 @shared_task
 def daily_timed_replica():
     """Creates daily timed replicas of production databases to development environment."""
     try:
         # Get all production instances
         prod_instances = DatabaseInstance.objects.filter(
-            server__environment_type='prod',
+            server__environment_type='production',
             is_deleted=False,
             status='available'
         )
         
         # Get development server
         dev_server = DatabaseServer.objects.filter(
-            environment_type='dev',
+            environment_type='development',
             is_active=True
         ).first()
         
@@ -463,3 +487,45 @@ def external_db_migration_task(instance_id, source_uri):
     except Exception as e:
         print(f"Migration failed: {str(e)}")
         return None
+
+
+@shared_task
+def monitor_database_connections():
+    """Agentless monitoring: checks pg_stat_database for active connections to provisioned DBs."""
+    import psycopg2
+    from .models import DatabaseInstance
+    
+    instances = DatabaseInstance.objects.filter(is_deleted=False, status='available')
+    servers = set(instance.server for instance in instances if instance.server)
+    
+    for server in servers:
+        try:
+            conn = psycopg2.connect(
+                dbname="postgres",
+                user=server.root_user,
+                password=server.root_password,
+                host=server.host,
+                port=server.port
+            )
+            cursor = conn.cursor()
+            cursor.execute("SELECT datname, numbackends FROM pg_stat_database")
+            stats = {row[0]: row[1] for row in cursor.fetchall()}
+            cursor.close()
+            conn.close()
+            
+            server_instances = [i for i in instances if i.server == server]
+            for instance in server_instances:
+                # 0 connections usually means the app is not using this database
+                connections = stats.get(instance.db_name, 0)
+                if connections == 0:
+                    msg = (
+                        f"⚠️ *Nidhi Monitoring Alert*\n"
+                        f"Application database `{instance.db_name}` on server `{server.name}` "
+                        f"has **0 active connections**.\n"
+                        f"It may have fallen back to SQLite or a hardcoded database!"
+                    )
+                    send_telegram_alert(msg)
+                    logger.warning(f"0 connections detected for {instance.db_name}")
+                    
+        except Exception as e:
+            logger.error(f"Failed to monitor databases on server {server.name}: {str(e)}")

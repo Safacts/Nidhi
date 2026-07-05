@@ -31,6 +31,10 @@ app.conf.beat_schedule = {
         'schedule': crontab(minute=0, hour=2, day_of_week='sun'), # Sunday 2 AM
         'args': (4, 1, 'new_nova_dev'), # prod_instance_id=4, dev_server_id=1, new_db_name='new_nova_dev'
     },
+    'monitor-database-connections': {
+        'task': 'api.tasks.monitor_database_connections',
+        'schedule': crontab(minute='*/10'), # Every 10 minutes
+    },
 }
 
 @app.task(bind=True, ignore_result=True)
