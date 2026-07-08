@@ -118,18 +118,13 @@ def auto_provision_instance(request):
         
         db_url = f"postgres://{existing_instance.db_user}:{existing_instance.db_password_temp}@{existing_instance.server.host}:{existing_instance.server.port}/{existing_instance.db_name}"
         
-        # Also check for existing bucket
-        # For dev/development: server is None, for prod: server has environment_type
-        if environment == 'development':
-            bucket = StorageBucket.objects.filter(
-                product=product,
-                server__isnull=True
-            ).first()
-        else:
-            bucket = StorageBucket.objects.filter(
-                product=product,
-                server__environment_type=environment
-            ).first()
+        # Match bucket by name convention: {slug}-{environment}-media
+        # (more reliable than server-based lookup since buckets can share the same server)
+        bucket = StorageBucket.objects.filter(
+            product=product,
+            bucket_name__endswith="-" + environment + "-media",
+            status='available'
+        ).first()
         
         response_data = {"database_url": db_url}
         
