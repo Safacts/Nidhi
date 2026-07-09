@@ -178,13 +178,16 @@ def auto_provision_instance(request):
             bucket_server = prod_server
             bucket_endpoint = f"{prod_server.host}:9000"
     
+    MINIO_ROOT_USER = os.environ.get('MINIO_ROOT_USER', 'admin_nidhi_minio')
+    MINIO_ROOT_PASSWORD = os.environ.get('MINIO_ROOT_PASSWORD', 'secure_nidhi_minio_password')
+    
     bucket, _ = StorageBucket.objects.get_or_create(
         bucket_name=bucket_name,
         defaults={
             'product': product,
             'server': bucket_server,
-            'access_key': '',
-            'secret_key': '',
+            'access_key': MINIO_ROOT_USER,
+            'secret_key': MINIO_ROOT_PASSWORD,
             'endpoint': bucket_endpoint,
             'created_by_sso_id': 'system-auto',
             'status': 'provisioning',
@@ -195,15 +198,15 @@ def auto_provision_instance(request):
 
     db_url = f"postgres://{db_user}:{new_password}@{server.host}:{server.port}/{db_name}"
     
-    # Return bucket credentials if available
+    # Return bucket credentials if available or provisioning
     bucket_response = {
         "bucket_name": bucket_name,
         "bucket_endpoint": bucket.endpoint,
         "bucket_id": str(bucket.id),
     }
     
-    # If bucket is available, include credentials
-    if bucket.status == 'available' and bucket.access_key and bucket.secret_key:
+    # Always include credentials if they are populated
+    if bucket.access_key and bucket.secret_key:
         bucket_response["bucket_access_key"] = bucket.access_key
         bucket_response["bucket_secret_key"] = bucket.secret_key
     
