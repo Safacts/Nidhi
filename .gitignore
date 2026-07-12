@@ -45,3 +45,4 @@ backend/celerybeat-schedule
 backend/delete_dbs.py
 backend/get_creds.py
 backend/list_metadata.py
+**/*.egg-info/

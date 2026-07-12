@@ -4,7 +4,15 @@ import { Bell, Check, X, AlertTriangle, Info, AlertCircle } from 'lucide-react';
 export const NotificationBell = () => {
   const [alerts, setAlerts] = useState([]);
   const [isOpen, setIsOpen] = useState(false);
+  const [knownAlertIds, setKnownAlertIds] = useState(new Set());
   const dropdownRef = useRef(null);
+
+  // Request Notification permission on mount
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
 
   const fetchAlerts = async () => {
     try {
@@ -16,6 +24,33 @@ export const NotificationBell = () => {
       if (response.ok) {
         const data = await response.json();
         setAlerts(data);
+        
+        // Trigger browser notifications for new unread alerts
+        if ('Notification' in window && Notification.permission === 'granted') {
+          const incomingUnreadIds = data.filter(a => !a.is_read).map(a => a.id);
+          
+          setKnownAlertIds(prev => {
+            const newIds = new Set(prev);
+            let hasNew = false;
+            
+            incomingUnreadIds.forEach(id => {
+              if (!newIds.has(id)) {
+                // We found a completely new unread alert
+                const alertItem = data.find(a => a.id === id);
+                if (alertItem) {
+                  new Notification('Nidhi Alert: ' + alertItem.title, {
+                    body: alertItem.message,
+                    icon: '/favicon.ico' // Or any suitable icon
+                  });
+                }
+                newIds.add(id);
+                hasNew = true;
+              }
+            });
+            
+            return hasNew ? newIds : prev;
+          });
+        }
       }
     } catch (err) {
       console.error('Failed to fetch alerts:', err);
