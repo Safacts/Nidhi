@@ -54,6 +54,11 @@ class RubixTokenAuthentication(BaseAuthentication):
                     profile_data = profile_resp.json()
                     username = profile_data.get('username') or 'sso_user'
                     user, created = User.objects.get_or_create(username=username)
+                    # Hardcode role for known admins
+                    if username in ['aadi', 'admin', 'aadisheshu']:
+                        user.role = 'founding_engineer'
+                    else:
+                        user.role = 'employee'
                     return (user, token)
                 else:
                     raise AuthenticationFailed('Invalid Rubix SSO token')

@@ -119,20 +119,44 @@ def send_telegram_backup_notification(backup_id):
         logger.error(f"Telegram notification failed: {str(e)}")
 
 
+def send_telegram_alert(message: str):
+    """Generic function to send a Telegram alert message."""
+    telegram_bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
+    telegram_chat_id = os.environ.get('TELEGRAM_CHAT_ID')
+    
+    if not telegram_bot_token or not telegram_chat_id:
+        logger.info("Telegram credentials not configured, skipping alert")
+        return
+        
+    telegram_url = f"https://api.telegram.org/bot{telegram_bot_token}/sendMessage"
+    payload = {
+        'chat_id': telegram_chat_id,
+        'text': message,
+        'parse_mode': 'Markdown'
+    }
+    
+    try:
+        response = requests.post(telegram_url, json=payload, timeout=10)
+        if response.status_code != 200:
+            logger.error(f"Failed to send Telegram alert: {response.text}")
+    except Exception as e:
+        logger.error(f"Telegram alert request failed: {str(e)}")
+
+
 @shared_task
 def daily_timed_replica():
     """Creates daily timed replicas of production databases to development environment."""
     try:
         # Get all production instances
         prod_instances = DatabaseInstance.objects.filter(
-            server__environment_type='prod',
+            server__environment_type='production',
             is_deleted=False,
             status='available'
         )
         
         # Get development server
         dev_server = DatabaseServer.objects.filter(
-            environment_type='dev',
+            environment_type='development',
             is_active=True
         ).first()
         
@@ -229,6 +253,15 @@ def replicate_prod_to_dev(prod_instance_id, dev_server_id, new_db_name):
         cursor2.execute(sql.SQL("GRANT ALL ON SCHEMA public TO {user}").format(
             user=sql.Identifier(db_user)
         ))
+        cursor2.execute(sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO {user}").format(
+            user=sql.Identifier(db_user)
+        ))
+        cursor2.execute(sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO {user}").format(
+            user=sql.Identifier(db_user)
+        ))
+        cursor2.execute(sql.SQL("ALTER ROLE {user} SET search_path TO public").format(
+            user=sql.Identifier(db_user)
+        ))
         cursor2.close()
         conn2.close()
         
@@ -308,6 +341,15 @@ def provision_database_task(instance_id):
         cursor2.execute(sql.SQL("GRANT ALL ON SCHEMA public TO {user}").format(
             user=sql.Identifier(instance.db_user)
         ))
+        cursor2.execute(sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO {user}").format(
+            user=sql.Identifier(instance.db_user)
+        ))
+        cursor2.execute(sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO {user}").format(
+            user=sql.Identifier(instance.db_user)
+        ))
+        cursor2.execute(sql.SQL("ALTER ROLE {user} SET search_path TO public").format(
+            user=sql.Identifier(instance.db_user)
+        ))
         cursor2.close()
         conn2.close()
 
@@ -340,17 +382,18 @@ def provision_bucket_task(bucket_id):
         MINIO_ROOT_PASSWORD = os.environ.get('MINIO_ROOT_PASSWORD', 'secure_nidhi_minio_password')
             
         if bucket.server:
+            # Production: Use VPS MinIO
             # We assume MinIO on remote VPS is exposed on port 9000
             endpoint = f"{bucket.server.host}:9000"
             
             # SSH into VPS and ensure MinIO is running
             # We run a docker container named nidhi-minio-plane
-            ssh_cmd = f"sshpass -p '{bucket.server.root_password}' ssh -o StrictHostKeyChecking=no {bucket.server.root_user}@{bucket.server.host} "
+            ssh_cmd = f"ssh -o StrictHostKeyChecking=no {bucket.server.root_user}@{bucket.server.host} "
             
             # Create data directory
-            subprocess.run(ssh_cmd + "'mkdir -p /data/minio'", shell=True)
+            subprocess.run(ssh_cmd + "'mkdir -p /data/minio'", shell=True, check=False)
             
-            # Run docker container
+            # Run docker container if not exists
             docker_cmd = (
                 f"'docker run -d --name nidhi-minio-plane --restart unless-stopped "
                 f"-p 9000:9000 -p 9001:9001 "
@@ -358,12 +401,13 @@ def provision_bucket_task(bucket_id):
                 f"-v /data/minio:/data minio/minio server /data --console-address :9001'"
             )
             # Run command. We ignore errors if container already exists, but we can try to start it just in case
-            subprocess.run(ssh_cmd + docker_cmd, shell=True)
-            subprocess.run(ssh_cmd + "'docker start nidhi-minio-plane'", shell=True)
+            subprocess.run(ssh_cmd + docker_cmd, shell=True, check=False)
+            subprocess.run(ssh_cmd + "'docker start nidhi-minio-plane 2>/dev/null || true'", shell=True, check=False)
             
             # Wait for MinIO to start
             time.sleep(5)
         else:
+            # Development: Use local MinIO container
             endpoint = os.environ.get('MINIO_ENDPOINT', 'minio:9000')
             
         client = Minio(
@@ -392,6 +436,7 @@ def provision_bucket_task(bucket_id):
         bucket.secret_key = MINIO_ROOT_PASSWORD
         bucket.status = 'available'
         bucket.save()
+        print(f"✅ Bucket {bucket.bucket_name} provisioned successfully on {endpoint}")
     except Exception as e:
         print(f"Failed to provision bucket {bucket_id}: {str(e)}")
         bucket = StorageBucket.objects.get(id=bucket_id)

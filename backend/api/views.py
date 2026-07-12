@@ -16,9 +16,6 @@ from django.utils import timezone
 from .models import DatabaseServer, Product, DatabaseInstance, DatabaseBackup, EmployeeProductAssignment, StorageBucket
 from .serializers import DatabaseServerSerializer, ProductSerializer, DatabaseInstanceSerializer, DatabaseBackupSerializer
 from .permissions import IsFoundingEngineer
-import logging
-
-logger = logging.getLogger(__name__)
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -73,7 +70,7 @@ def auto_register_server(request):
             port=data.get('port', 5432),
             root_user=data.get('root_user', 'postgres'),
             root_password=data.get('root_password'),
-            environment_type='prod',
+            environment_type='production',
             is_active=True
         )
         return Response({"message": "Server registered successfully", "id": server.id}, status=status.HTTP_201_CREATED)
@@ -94,19 +91,21 @@ def auto_provision_instance(request):
     if token != expected_token:
         return Response({"error": "Unauthorized API key"}, status=status.HTTP_401_UNAUTHORIZED)
         
-    project_slug = request.data.get('project_slug')
-    environment = request.data.get('environment', 'prod').lower()
+    project_slug = request.data.get('project_slug', '').lower().replace(' ', '_')
+    environment = request.data.get('environment', 'production').lower()
     
     if not project_slug:
         return Response({"error": "project_slug is required"}, status=status.HTTP_400_BAD_REQUEST)
         
-    # 1. Get or create the product
-    product, _ = Product.objects.get_or_create(
-        name=project_slug, 
-        defaults={'description': f'Auto-created for {project_slug}'}
-    )
+    # Normalize: find existing product case-insensitively
+    product = Product.objects.filter(name__iexact=project_slug).first()
+    if not product:
+        product = Product.objects.create(
+            name=project_slug,
+            description=f'Auto-created for {project_slug}'
+        )
     
-    # 2. Check if instance already exists
+    # 2. Check if instance already exists (case-insensitive)
     existing_instance = DatabaseInstance.objects.filter(
         product=product,
         server__environment_type=environment,
@@ -118,7 +117,26 @@ def auto_provision_instance(request):
             return Response({"error": "Instance is not yet available"}, status=status.HTTP_400_BAD_REQUEST)
         
         db_url = f"postgres://{existing_instance.db_user}:{existing_instance.db_password_temp}@{existing_instance.server.host}:{existing_instance.server.port}/{existing_instance.db_name}"
-        return Response({"database_url": db_url}, status=status.HTTP_200_OK)
+        
+        # Match bucket by name convention: {slug}-{environment}-media
+        # (more reliable than server-based lookup since buckets can share the same server)
+        bucket = StorageBucket.objects.filter(
+            product=product,
+            bucket_name__endswith="-" + environment + "-media",
+            status='available'
+        ).first()
+        
+        response_data = {"database_url": db_url}
+        
+        if bucket and bucket.status == 'available':
+            response_data["bucket_name"] = bucket.bucket_name
+            response_data["bucket_endpoint"] = bucket.endpoint
+            response_data["bucket_id"] = str(bucket.id)
+            if bucket.access_key and bucket.secret_key:
+                response_data["bucket_access_key"] = bucket.access_key
+                response_data["bucket_secret_key"] = bucket.secret_key
+        
+        return Response(response_data, status=status.HTTP_200_OK)
         
     # 3. Find available server
     server = DatabaseServer.objects.filter(environment_type=environment, is_active=True).first()
@@ -129,7 +147,7 @@ def auto_provision_instance(request):
     db_name = f"{project_slug.replace('-', '_')}_{environment}"[:50]
     db_user = f"{db_name}_user"[:50]
     
-    if DatabaseInstance.objects.filter(db_name=db_name).exists():
+    if DatabaseInstance.objects.filter(db_name__iexact=db_name).exists():
         return Response({"error": "Database name conflict"}, status=status.HTTP_409_CONFLICT)
         
     new_password = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(16))
@@ -149,14 +167,28 @@ def auto_provision_instance(request):
     provision_database_task.delay(instance.id)
 
     bucket_name = f"{project_slug}-{environment}-media"[:63]
+    
+    # For dev: use local MinIO (server=None), for prod: use VPS MinIO (server=prod_server)
+    bucket_server = None
+    bucket_endpoint = os.environ.get('PUBLIC_MINIO_ENDPOINT', 'localhost:9000')
+    
+    if environment == 'production':
+        prod_server = DatabaseServer.objects.filter(environment_type='production', is_active=True).first()
+        if prod_server:
+            bucket_server = prod_server
+            bucket_endpoint = f"{prod_server.host}:9000"
+    
+    MINIO_ROOT_USER = os.environ.get('MINIO_ROOT_USER', 'admin_nidhi_minio')
+    MINIO_ROOT_PASSWORD = os.environ.get('MINIO_ROOT_PASSWORD', 'secure_nidhi_minio_password')
+    
     bucket, _ = StorageBucket.objects.get_or_create(
         bucket_name=bucket_name,
         defaults={
             'product': product,
-            'server': None,
-            'access_key': '',
-            'secret_key': '',
-            'endpoint': os.environ.get('PUBLIC_MINIO_ENDPOINT', 'localhost:9000'),
+            'server': bucket_server,
+            'access_key': MINIO_ROOT_USER,
+            'secret_key': MINIO_ROOT_PASSWORD,
+            'endpoint': bucket_endpoint,
             'created_by_sso_id': 'system-auto',
             'status': 'provisioning',
         }
@@ -165,11 +197,22 @@ def auto_provision_instance(request):
         provision_bucket_task.delay(bucket.id)
 
     db_url = f"postgres://{db_user}:{new_password}@{server.host}:{server.port}/{db_name}"
-    return Response({
-        "database_url": db_url,
+    
+    # Return bucket credentials if available or provisioning
+    bucket_response = {
         "bucket_name": bucket_name,
         "bucket_endpoint": bucket.endpoint,
         "bucket_id": str(bucket.id),
+    }
+    
+    # Always include credentials if they are populated
+    if bucket.access_key and bucket.secret_key:
+        bucket_response["bucket_access_key"] = bucket.access_key
+        bucket_response["bucket_secret_key"] = bucket.secret_key
+    
+    return Response({
+        "database_url": db_url,
+        **bucket_response,
     }, status=status.HTTP_202_ACCEPTED)
 
 @api_view(['GET', 'POST'])
@@ -227,9 +270,9 @@ def database_instance_list_create(request):
         
         db_user = db_name.replace('-', '_')[:50] + "_user"
         
-        if DatabaseInstance.objects.filter(db_name=db_name).exists():
+        if DatabaseInstance.objects.filter(db_name__iexact=db_name).exists():
             return Response({"error": "Database name already exists."}, status=status.HTTP_400_BAD_REQUEST)
-            
+
         new_password = ''.join(secrets.choice(string.ascii_letters + string.digits) for i in range(16))
         
         instance = DatabaseInstance(
@@ -340,56 +383,30 @@ def me(request):
         'role': getattr(request.user, 'role', 'employee')
     })
 
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def alert_list(request):
+    from .models import SystemAlert
+    from .serializers import SystemAlertSerializer
+    alerts = SystemAlert.objects.all().order_by('-created_at')[:50]
+    serializer = SystemAlertSerializer(alerts, many=True)
+    return Response(serializer.data)
+
 @api_view(['POST'])
-@authentication_classes([])
-@permission_classes([AllowAny])
-def receive_heartbeat(request):
-    """
-    Receives heartbeat from apps to ensure they are using Nidhi-provisioned databases.
-    Protected by NIDHI_APP_API_KEY.
-    """
-    token = request.headers.get('Authorization', '')
-    expected_token = f"Bearer {getattr(settings, 'NIDHI_APP_API_KEY', 'super_secret_app_api_key_123')}"
-    
-    if token != expected_token:
-        return Response({"error": "Unauthorized API key"}, status=status.HTTP_401_UNAUTHORIZED)
-        
-    project_slug = request.data.get('project_slug')
-    environment = request.data.get('environment', 'prod').lower()
-    db_url = request.data.get('db_url')
-    
-    if not all([project_slug, environment, db_url]):
-        return Response({"error": "project_slug, environment, and db_url are required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-    # Check if instance is provisioned
-    instance = DatabaseInstance.objects.filter(
-        product__name=project_slug,
-        server__environment_type=environment,
-        is_deleted=False
-    ).first()
-    
-    if not instance:
-        logger.warning(f"Heartbeat received for unknown instance: {project_slug} ({environment})")
-        return Response({"status": "unknown_instance"}, status=status.HTTP_200_OK)
-        
-    expected_db_url = f"postgres://{instance.db_user}:{instance.db_password_temp}@{instance.server.host}:{instance.server.port}/{instance.db_name}"
-    
-    if db_url != expected_db_url:
-        logger.warning(f"Database mismatch for {project_slug} ({environment}). Expected: {expected_db_url}, Received: {db_url}")
-        
-        # Send Telegram notification
-        telegram_bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
-        telegram_chat_id = os.environ.get('TELEGRAM_CHAT_ID')
-        
-        if telegram_bot_token and telegram_chat_id:
-            message = f"🚨 *Database Mismatch Alert* 🚨\n\n*App:* {project_slug} ({environment})\n*Expected:* {expected_db_url}\n*Actual:* {db_url}"
-            telegram_url = f"https://api.telegram.org/bot{telegram_bot_token}/sendMessage"
-            payload = {'chat_id': telegram_chat_id, 'text': message, 'parse_mode': 'Markdown'}
-            try:
-                requests.post(telegram_url, json=payload, timeout=10)
-            except Exception as e:
-                logger.error(f"Failed to send Telegram notification: {str(e)}")
-                
-        return Response({"status": "mismatch", "expected": expected_db_url}, status=status.HTTP_200_OK)
-        
-    return Response({"status": "ok"}, status=status.HTTP_200_OK)
+@permission_classes([IsAuthenticated])
+def alert_mark_read(request, alert_id):
+    from .models import SystemAlert
+    try:
+        alert = SystemAlert.objects.get(id=alert_id)
+        alert.is_read = True
+        alert.save()
+        return Response({"status": "marked read"}, status=status.HTTP_200_OK)
+    except SystemAlert.DoesNotExist:
+        return Response({"error": "not found"}, status=status.HTTP_404_NOT_FOUND)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def alert_mark_all_read(request):
+    from .models import SystemAlert
+    SystemAlert.objects.filter(is_read=False).update(is_read=True)
+    return Response({"status": "all marked read"}, status=status.HTTP_200_OK)

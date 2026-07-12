@@ -26,7 +26,7 @@ const AuthCallback = () => {
 
   const exchangeCodeForToken = async (code) => {
     try {
-      const backendUrl = `/api/sso/callback/`;
+      const backendUrl = `/nidhi-api/sso/callback/`;
       const baseUri = window.location.origin + (window.location.pathname.startsWith('/nidhi') ? '/nidhi' : '');
       const redirectUri = process.env.REACT_APP_RUBIX_REDIRECT_URI || `${baseUri}/auth/callback`;
       const response = await fetch(backendUrl, {
@@ -42,7 +42,7 @@ const AuthCallback = () => {
         
         // Fetch user profile info
         try {
-          const profileResp = await fetch(`/api/me/`, {
+          const profileResp = await fetch(`/nidhi-api/me/`, {
             headers: { 'Authorization': `Bearer ${data.token}` }
           });
           if (profileResp.ok) {

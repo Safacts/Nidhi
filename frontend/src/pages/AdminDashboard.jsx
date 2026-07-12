@@ -1,7 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Database, Server, Copy, ShieldAlert, Zap, Plus, Package, User, Settings, CreditCard, ChevronDown, LogOut } from 'lucide-react';
+import { Database, Server, Copy, ShieldAlert, Zap, Plus, Package, User, Settings, CreditCard, ChevronDown, LogOut, HardDrive, ExternalLink } from 'lucide-react';
 import { Logo } from '../components/Logo';
 import { ThemeToggle } from '../contexts/ThemeContext';
+import { NotificationBell } from '../components/NotificationBell';
+import { useToast } from '../components/Toast';
+import { useConfirm } from '../components/ConfirmDialog';
 import { useNavigate } from 'react-router-dom';
 
 const AdminDashboard = () => {
@@ -9,8 +12,11 @@ const AdminDashboard = () => {
   const [servers, setServers] = useState([]);
   const [products, setProducts] = useState([]);
   const [instances, setInstances] = useState([]);
+  const [buckets, setBuckets] = useState([]);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const navigate = useNavigate();
+  const { showToast } = useToast();
+  const showConfirm = useConfirm();
 
   // Forms state
   const [newProduct, setNewProduct] = useState({ name: '', description: '' });
@@ -20,6 +26,7 @@ const AdminDashboard = () => {
     fetchServers();
     fetchInstances();
     fetchProducts();
+    fetchBuckets();
   }, []);
 
   const getHeaders = () => {
@@ -54,6 +61,14 @@ const AdminDashboard = () => {
     } catch (e) { console.error(e); }
   };
 
+  const fetchBuckets = async () => {
+    try {
+      const res = await fetch(`/nidhi-api/buckets/`, { headers: getHeaders() });
+      if (res.ok) setBuckets(await res.json());
+      else if (res.status === 401 || res.status === 403) navigate('/login');
+    } catch (e) { console.error(e); }
+  };
+
   const handleCreateProduct = async (e) => {
     e.preventDefault();
     try {
@@ -63,11 +78,11 @@ const AdminDashboard = () => {
         body: JSON.stringify(newProduct)
       });
       if (res.ok) {
-        alert("Product created!");
+        showToast("Product created!", 'success');
         setNewProduct({ name: '', description: '' });
         fetchProducts();
       } else {
-        alert("Failed to create product.");
+        showToast("Failed to create product.", 'error');
       }
     } catch (e) { console.error(e); }
   };
@@ -82,29 +97,30 @@ const AdminDashboard = () => {
         body: JSON.stringify(payload)
       });
       if (res.ok) {
-        alert("Server added!");
+        showToast("Server added!", 'success');
         setNewServer({ name: '', host: '', port: '5432', root_user: 'postgres', root_password: '', environment_type: 'prod' });
         fetchServers();
       } else {
-        alert("Failed to add server.");
+        showToast("Failed to add server.", 'error');
       }
     } catch (e) { console.error(e); }
   };
 
   const forceReplication = async (id) => {
     const devServer = servers.find(s => s.environment_type === 'dev');
-    if (!devServer) return alert("No dev server found for replication.");
-    if (!window.confirm("Force replication to Dev? This will clone Prod data over.")) return;
+    if (!devServer) { showToast("No dev server found for replication.", 'error'); return; }
+    const ok = await showConfirm("Force replication to Dev? This will clone Prod data over.");
+    if (!ok) return;
     try {
       await fetch(`/nidhi-api/instances/${id}/replicate/`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({ dev_server_id: devServer.id, new_db_name: `repl_${Date.now()}` })
       });
-      alert("Replication task queued in background.");
+      showToast("Replication task queued in background.", 'success');
       fetchInstances();
     } catch (e) {
-      alert("Replication failed.");
+      showToast("Replication failed.", 'error');
     }
   };
 
@@ -122,6 +138,7 @@ const AdminDashboard = () => {
           </div>
         </div>
         <div className="flex gap-4 items-center">
+          <NotificationBell />
           <ThemeToggle />
           
           <button 
@@ -190,6 +207,12 @@ const AdminDashboard = () => {
           className={`px-4 py-2 rounded-lg font-medium transition-colors ${activeTab === 'products' ? 'bg-slate-800 text-white dark:bg-slate-700' : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-300 dark:hover:bg-slate-700'}`}
         >
           <Package className="inline w-4 h-4 mr-2" /> Products Config
+        </button>
+        <button 
+          onClick={() => setActiveTab('buckets')}
+          className={`px-4 py-2 rounded-lg font-medium transition-colors ${activeTab === 'buckets' ? 'bg-slate-800 text-white dark:bg-slate-700' : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-300 dark:hover:bg-slate-700'}`}
+        >
+          <HardDrive className="inline w-4 h-4 mr-2" /> Storage Buckets
         </button>
       </div>
 
@@ -299,6 +322,62 @@ const AdminDashboard = () => {
               </div>
             </div>
           </>
+        )}
+
+        {activeTab === 'buckets' && (
+          <div className="lg:col-span-4">
+            <h2 className="text-xl font-semibold mb-4 text-slate-700 dark:text-slate-300">Storage Buckets</h2>
+            <div className="bg-white dark:bg-slate-800/40 backdrop-blur-md border border-slate-300 dark:border-slate-700 rounded-xl overflow-hidden shadow-xl">
+              <table className="w-full text-left">
+                <thead className="bg-slate-100 dark:bg-slate-800/80 text-slate-500 dark:text-slate-400 text-xs uppercase tracking-wider">
+                  <tr>
+                    <th className="px-6 py-4">Bucket Name</th>
+                    <th className="px-6 py-4">Product</th>
+                    <th className="px-6 py-4">Location</th>
+                    <th className="px-6 py-4">Endpoint</th>
+                    <th className="px-6 py-4">Status</th>
+                    <th className="px-6 py-4">Created</th>
+                    <th className="px-6 py-4">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-700/50">
+                  {buckets.map(bucket => (
+                    <tr key={bucket.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/60 transition">
+                      <td className="px-6 py-4 font-semibold">{bucket.bucket_name}</td>
+                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{bucket.product__name}</td>
+                      <td className="px-6 py-4">
+                        {bucket.server__name ? (
+                          <span className="text-sm">
+                            <span className={`px-2 py-1 text-xs rounded border ${bucket.server__environment_type === 'prod' ? 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20' : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'}`}>
+                              {bucket.server__environment_type.toUpperCase()}
+                            </span>
+                            <span className="ml-2 text-slate-500 dark:text-slate-400">{bucket.server__host}</span>
+                          </span>
+                        ) : (
+                          <span className="text-sm text-slate-500 dark:text-slate-400">Local Dev Server</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400 text-sm">{bucket.endpoint}</td>
+                      <td className="px-6 py-4">
+                        <span className={`px-2 py-1 text-xs rounded-full border ${bucket.status === 'available' ? 'bg-[#4ade80]/20 text-emerald-600 dark:text-[#98FF98] border-[#4ade80]/40' : 'bg-red-500/10 text-red-500 dark:text-red-400 border-red-500/20'}`}>
+                          {bucket.status.toUpperCase()}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400 text-sm">{new Date(bucket.created_at).toLocaleDateString()}</td>
+                      <td className="px-6 py-4">
+                        <button 
+                          onClick={() => navigate(`/bucket-studio/${bucket.id}`)}
+                          className="px-3 py-1 bg-indigo-100 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-300 dark:border-indigo-500/20 rounded hover:bg-indigo-200 dark:hover:bg-indigo-500/20 text-xs flex items-center gap-1"
+                        >
+                          <ExternalLink className="w-3 h-3" /> Explore
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         )}
 
       </div>

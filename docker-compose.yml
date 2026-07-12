@@ -67,7 +67,7 @@ services:
   # This is Nidhi's OWN database for storing requests
   db:
     restart: unless-stopped
-    image: postgres:16
+    image: postgres:13
     volumes:
       - nidhi_postgres_data:/var/lib/postgresql/data/
       - ./db-primary-init:/docker-entrypoint-initdb.d
