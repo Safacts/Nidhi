@@ -45,7 +45,7 @@ def inject_nidhi_storage(settings_module_locals: dict) -> None:
 
     if "storages" not in locals_.get("INSTALLED_APPS", []):
         locals_["INSTALLED_APPS"].append("storages")
-    print(f"🪣 [Nidhi SDK] Activated MinIO Storage on bucket: {locals_[AWS_STORAGE_BUCKET_NAME]}")
+    print(f"🪣 [Nidhi SDK] Activated MinIO Storage on bucket: {bucket_name}")
 
 
 def inject_nidhi_database(settings_module_locals: dict) -> None:
