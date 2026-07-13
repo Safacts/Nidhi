@@ -168,16 +168,12 @@ def auto_provision_instance(request):
 
     bucket_name = f"{project_slug}-{environment}-media"[:63]
     
-    # For dev: use local MinIO (server=None), for prod: use VPS MinIO (server=prod_server)
+    # All buckets (dev + prod) use Nidhi MinIO on the control plane server.
+    # Production containers reach it via Tailscale. Do NOT assign buckets to the
+    # VPS (it has no MinIO — only PostgreSQL via nidhi-live-data-plane).
     bucket_server = None
-    bucket_endpoint = os.environ.get('PUBLIC_MINIO_ENDPOINT', 'localhost:9000')
-    
-    if environment == 'production':
-        prod_server = DatabaseServer.objects.filter(environment_type='production', is_active=True).first()
-        if prod_server:
-            bucket_server = prod_server
-            bucket_endpoint = f"{prod_server.host}:9000"
-    
+    bucket_endpoint = os.environ.get("PUBLIC_MINIO_ENDPOINT", "localhost:9000")
+
     MINIO_ROOT_USER = os.environ.get('MINIO_ROOT_USER', 'admin_nidhi_minio')
     MINIO_ROOT_PASSWORD = os.environ.get('MINIO_ROOT_PASSWORD', 'secure_nidhi_minio_password')
     
