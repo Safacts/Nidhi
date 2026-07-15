@@ -501,3 +501,43 @@ def create_folder(request, bucket_id):
     except Exception as e:
         return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
+
+@api_view(['PATCH'])
+@permission_classes([IsFoundingEngineer])
+def relocate_bucket(request, bucket_id):
+    """SCRUM-287: dynamically relocate a bucket by updating its endpoint / server.
+
+    Updates the MINIO endpoint (and optionally the owning DatabaseServer) that apps receive on
+    their next auto-provision/restart. Does NOT copy objects — that is an infra operation; this
+    changes where Nidhi points apps for the given bucket.
+    """
+    bucket = get_object_or_404(StorageBucket, id=bucket_id)
+
+    new_endpoint = request.data.get('endpoint')
+    new_server_id = request.data.get('server_id')
+
+    if not new_endpoint and new_server_id is None:
+        return Response(
+            {"error": "Provide 'endpoint' and/or 'server_id' to relocate the bucket."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if new_endpoint:
+        bucket.endpoint = new_endpoint
+
+    if new_server_id is not None:
+        if new_server_id in ('', None, 'null'):
+            bucket.server = None
+        else:
+            server = get_object_or_404(DatabaseServer, id=new_server_id)
+            bucket.server = server
+
+    bucket.save()
+
+    return Response({
+        "message": "Bucket relocated. Apps will use the new endpoint on next provision/restart.",
+        "bucket_name": bucket.bucket_name,
+        "endpoint": bucket.endpoint,
+        "server_id": str(bucket.server.id) if bucket.server else None,
+    }, status=status.HTTP_200_OK)

@@ -24,6 +24,7 @@ urlpatterns = [
     path('buckets/', bucket_views.list_buckets, name='list_buckets'),
     path('buckets/provision/', bucket_views.provision_bucket, name='provision_bucket'),
     path('buckets/<uuid:bucket_id>/reveal/', bucket_views.reveal_bucket_credentials, name='reveal_bucket_credentials'),
+    path('buckets/<uuid:bucket_id>/relocate/', bucket_views.relocate_bucket, name='relocate_bucket'),
     path('buckets/<uuid:bucket_id>/objects/', bucket_views.list_bucket_objects, name='list_bucket_objects'),
     path('buckets/<uuid:bucket_id>/upload/', bucket_views.upload_object, name='upload_object'),
     path('buckets/<uuid:bucket_id>/delete/', bucket_views.delete_object, name='delete_object'),
