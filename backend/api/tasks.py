@@ -13,6 +13,11 @@ logger = logging.getLogger(__name__)
 # Telegram sendDocument hard limit is 50MB for bots. Keep a safety margin.
 TELEGRAM_MAX_PART_BYTES = 49 * 1024 * 1024
 
+# Persistent on-server copy of encrypted backups (mounted volume so it survives container
+# recreation). Falls back to /tmp if the volume is absent, but that is NOT durable.
+PERSISTENT_BACKUP_DIR = os.environ.get('PERSISTENT_BACKUP_DIR', '/backups')
+KEEP_LOCAL_ENCRYPTED = int(os.environ.get('KEEP_LOCAL_ENCRYPTED', '7'))
+
 
 def _get_encryption_key():
     """Returns the backup encryption key or raises if missing/insecure (SCRUM-251, fail-fast)."""
@@ -71,6 +76,26 @@ def _telegram_send_document(bot_token, chat_id, file_path, caption=None):
     if resp.status_code != 200:
         raise RuntimeError(f"Telegram sendDocument failed ({resp.status_code}): {resp.text}")
 
+
+def _rotate_local_encrypted(instance_db_name):
+    """Keep only the latest KEEP_LOCAL_ENCRYPTED encrypted backups for an instance."""
+    try:
+        if not os.path.isdir(PERSISTENT_BACKUP_DIR):
+            return
+        prefix = f"backup_{instance_db_name}_"
+        files = sorted(
+            (f for f in os.listdir(PERSISTENT_BACKUP_DIR)
+             if f.startswith(prefix) and f.endswith('.enc')),
+            key=lambda f: os.path.getmtime(os.path.join(PERSISTENT_BACKUP_DIR, f)),
+        )
+        for old in files[:-KEEP_LOCAL_ENCRYPTED]:
+            try:
+                os.remove(os.path.join(PERSISTENT_BACKUP_DIR, old))
+            except OSError:
+                pass
+    except Exception:
+        pass
+
 @shared_task
 def backup_all_databases():
     """Iterates through all active DatabaseInstances and triggers a backup for each."""
@@ -80,23 +105,29 @@ def backup_all_databases():
 
 @shared_task
 def backup_single_database(instance_id):
-    """pg_dump a database, encrypt it (AES-256), and ship it off-site to Telegram.
+    """pg_dump a database, persist an AES-256-encrypted copy, and ship it off-site to Telegram.
 
-    SCRUM-251: produces a real encrypted artifact, uploads it via sendDocument (chunked if
-    >50MB), and always cleans up every temp file (dump, .enc, parts).
+    SCRUM-251: the plaintext dump is written to a persistent volume (/backups by default),
+    encrypted in place, optionally mirrored to Telegram via sendDocument (chunked >50MB), and the
+    plaintext is always removed. The encrypted local copy is retained (rotated to last N) so
+    backups survive a container restart.
     """
     backup_path = None
+    local_enc_path = None
     try:
         instance = DatabaseInstance.objects.get(id=instance_id)
         server = instance.server
 
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         backup_filename = f"backup_{instance.db_name}_{timestamp}.dump"
-        backup_path = os.path.join('/tmp', backup_filename)
+
+        # Plaintext dump goes to the persistent volume (not /tmp) so it survives restarts.
+        os.makedirs(PERSISTENT_BACKUP_DIR, exist_ok=True)
+        backup_path = os.path.join(PERSISTENT_BACKUP_DIR, backup_filename)
 
         backup_record = DatabaseBackup.objects.create(
             instance=instance,
-            s3_path=f"telegram://encrypted/{backup_filename}.enc",
+            s3_path=f"file://{backup_path}.enc",
             status='in_progress'
         )
 
@@ -121,8 +152,9 @@ def backup_single_database(instance_id):
         backup_record.file_size_bytes = os.path.getsize(backup_path)
         backup_record.save()
 
-        # Encrypt + upload the actual artifact (raises on any failure -> marked failed below).
-        send_telegram_backup_document(backup_record.id, backup_path)
+        # Encrypt (persist locally) + upload to Telegram. Raises on hard failure.
+        local_enc_path = ship_encrypted_backup(backup_record.id, backup_path)
+        _rotate_local_encrypted(instance.db_name)
 
         backup_record.status = 'completed'
         backup_record.save()
@@ -137,7 +169,7 @@ def backup_single_database(instance_id):
         except Exception:
             pass
     finally:
-        # Always remove the plaintext dump.
+        # Always remove the plaintext dump (the .enc copy is retained on the volume).
         if backup_path and os.path.exists(backup_path):
             try:
                 os.remove(backup_path)
@@ -145,49 +177,47 @@ def backup_single_database(instance_id):
                 pass
 
 
-def send_telegram_backup_document(backup_id, dump_path):
-    """Encrypts dump_path with AES-256 and uploads it to Telegram via sendDocument.
+def ship_encrypted_backup(backup_id, dump_path):
+    """Encrypts dump_path (AES-256) into the persistent volume and mirrors it to Telegram.
 
-    Chunks files >~49MB and cleans up every produced artifact. Raises on failure so the
-    caller can mark the backup failed (no silent success).
+    Returns the local .enc path (kept on the volume). Raises on encryption failure so the caller
+    marks the backup failed (no silent success). Telegram upload is attempted if configured; a
+    Telegram failure is logged but does NOT fail the local encrypted copy.
     """
-    enc_path = None
-    parts = []
     backup = DatabaseBackup.objects.get(id=backup_id)
     instance = backup.instance
+    enc_path = dump_path + '.enc'
+
+    key = _get_encryption_key()
+    enc_path = _encrypt_file_aes256(dump_path, key)
 
     telegram_bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
     telegram_chat_id = os.environ.get('TELEGRAM_CHAT_ID')
-    if not telegram_bot_token or not telegram_chat_id:
-        raise RuntimeError("Telegram credentials not configured; cannot ship encrypted backup off-site.")
+    if telegram_bot_token and telegram_chat_id:
+        try:
+            parts = _split_file(enc_path)
+            total = len(parts)
+            for i, part in enumerate(parts, start=1):
+                caption = (
+                    f"🔒 Nidhi encrypted backup\n"
+                    f"DB: {instance.db_name} @ {instance.server.name}\n"
+                    f"{backup.created_at.strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
+                    f"AES-256-CBC (openssl pbkdf2) — part {i}/{total}"
+                )
+                _telegram_send_document(telegram_bot_token, telegram_chat_id, part, caption=caption)
+            logger.info(f"Encrypted backup for {instance.db_name} mirrored to Telegram in {total} part(s).")
+            for p in parts:
+                if p != enc_path and os.path.exists(p):
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
+        except Exception as e:
+            logger.error(f"Telegram upload failed (local encrypted copy retained): {str(e)}")
+    else:
+        logger.warning("Telegram credentials not configured; keeping on-server encrypted backup only.")
 
-    key = _get_encryption_key()
-    try:
-        enc_path = _encrypt_file_aes256(dump_path, key)
-        parts = _split_file(enc_path)
-        total = len(parts)
-        for i, part in enumerate(parts, start=1):
-            caption = (
-                f"🔒 Nidhi encrypted backup\n"
-                f"DB: {instance.db_name} @ {instance.server.name}\n"
-                f"{backup.created_at.strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
-                f"AES-256-CBC (openssl pbkdf2) — part {i}/{total}"
-            )
-            _telegram_send_document(telegram_bot_token, telegram_chat_id, part, caption=caption)
-        logger.info(f"Encrypted backup for {instance.db_name} uploaded to Telegram in {total} part(s).")
-    finally:
-        # Clean up encrypted file and any chunk parts.
-        for p in parts:
-            if p != enc_path and os.path.exists(p):
-                try:
-                    os.remove(p)
-                except OSError:
-                    pass
-        if enc_path and os.path.exists(enc_path):
-            try:
-                os.remove(enc_path)
-            except OSError:
-                pass
+    return enc_path
 
 
 def send_telegram_alert(message: str):
