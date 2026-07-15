@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { Database, Plus, RefreshCw, X, Key, Trash2, LogOut, User, Settings, CreditCard, ChevronDown } from 'lucide-react';
 import { Logo } from '../components/Logo';
 import { ThemeToggle } from '../contexts/ThemeContext';
+import { NotificationBell } from '../components/NotificationBell';
+import { useToast } from '../components/Toast';
+import { useConfirm } from '../components/ConfirmDialog';
 import { useNavigate } from 'react-router-dom';
 
 const EmployeeDashboard = () => {
@@ -11,6 +14,8 @@ const EmployeeDashboard = () => {
   const [showBucketModal, setShowBucketModal] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const navigate = useNavigate();
+  const { showToast } = useToast();
+  const showConfirm = useConfirm();
   const [servers, setServers] = useState([]);
   const [products, setProducts] = useState([]);
   const [buckets, setBuckets] = useState([]);
@@ -101,12 +106,13 @@ const EmployeeDashboard = () => {
         setShowProvisionModal(false);
         setNewDbForm({ db_name: '', server_id: '', product_id: '' });
         fetchInstances();
+        showToast('Database provisioning started', 'success');
       } else {
         const errorData = await response.json();
-        alert("Failed: " + JSON.stringify(errorData));
+        showToast("Failed: " + JSON.stringify(errorData), 'error');
       }
     } catch (error) {
-      alert("Error provisioning database");
+      showToast("Error provisioning database", 'error');
     }
   };
 
@@ -121,15 +127,16 @@ const EmployeeDashboard = () => {
         setBucketCredentialsModal(data);
       } else {
         const errorData = await res.json();
-        alert("Failed to fetch bucket credentials: " + JSON.stringify(errorData));
+        showToast("Failed to fetch bucket credentials: " + JSON.stringify(errorData), 'error');
       }
     } catch (error) {
-      alert("Error fetching credentials");
+      showToast("Error fetching credentials", 'error');
     }
   };
 
   const requestSoftDelete = async (id) => {
-    if (!window.confirm("Are you sure you want to request soft-delete? This will revoke access immediately.")) return;
+    const ok = await showConfirm("Are you sure you want to request soft-delete? This will revoke access immediately.");
+    if (!ok) return;
     try {
       const token = localStorage.getItem('sso_token');
       await fetch(`/nidhi-api/instances/${id}/delete/`, {
@@ -138,7 +145,7 @@ const EmployeeDashboard = () => {
       });
       fetchInstances();
     } catch (err) {
-      alert("Soft delete failed");
+      showToast("Soft delete failed", 'error');
     }
   };
 
@@ -159,12 +166,13 @@ const EmployeeDashboard = () => {
         setShowBucketModal(false);
         setNewBucketForm({ bucket_name: '', product_id: '', server_id: '' });
         fetchBuckets();
+        showToast('Bucket provisioning started', 'success');
       } else {
         const errorData = await res.json();
-        alert("Failed to provision bucket: " + JSON.stringify(errorData));
+        showToast("Failed to provision bucket: " + JSON.stringify(errorData), 'error');
       }
     } catch (error) {
-      alert("Error provisioning bucket");
+      showToast("Error provisioning bucket", 'error');
     }
   };
 
@@ -179,10 +187,10 @@ const EmployeeDashboard = () => {
         setCredentialsModal(data);
       } else {
         const errorData = await res.json();
-        alert("Failed to fetch credentials: " + JSON.stringify(errorData));
+        showToast("Failed to fetch credentials: " + JSON.stringify(errorData), 'error');
       }
     } catch (err) {
-      alert("Error fetching credentials");
+      showToast("Error fetching credentials", 'error');
     }
   };
 
@@ -225,6 +233,7 @@ const EmployeeDashboard = () => {
           </div>
         </div>
         <div className="flex gap-4 items-center">
+          <NotificationBell />
           <ThemeToggle />
           {isAdmin && (
             <button 
@@ -590,6 +599,13 @@ const EmployeeDashboard = () => {
                   >
                     {bucket.status === 'provisioning' ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Key className="w-4 h-4" />}
                     {bucket.status === 'provisioning' ? 'Provisioning...' : 'Credentials'}
+                  </button>
+                  <button 
+                    onClick={() => navigate(`/bucket-studio/${bucket.id}`)}
+                    disabled={bucket.status !== 'available'}
+                    className="flex-1 px-3 py-2.5 bg-purple-50 dark:bg-purple-500/10 text-purple-600 dark:text-purple-400 font-medium rounded-lg hover:bg-purple-100 dark:hover:bg-purple-500/20 disabled:opacity-50 transition flex items-center justify-center gap-2 whitespace-nowrap"
+                  >
+                    Explore
                   </button>
                 </div>
               </div>

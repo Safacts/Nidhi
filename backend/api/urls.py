@@ -24,8 +24,22 @@ urlpatterns = [
     path('buckets/', bucket_views.list_buckets, name='list_buckets'),
     path('buckets/provision/', bucket_views.provision_bucket, name='provision_bucket'),
     path('buckets/<uuid:bucket_id>/reveal/', bucket_views.reveal_bucket_credentials, name='reveal_bucket_credentials'),
+    path('buckets/<uuid:bucket_id>/relocate/', bucket_views.relocate_bucket, name='relocate_bucket'),
+    path('buckets/<uuid:bucket_id>/objects/', bucket_views.list_bucket_objects, name='list_bucket_objects'),
+    path('buckets/<uuid:bucket_id>/upload/', bucket_views.upload_object, name='upload_object'),
+    path('buckets/<uuid:bucket_id>/delete/', bucket_views.delete_object, name='delete_object'),
+    path('buckets/<uuid:bucket_id>/create-folder/', bucket_views.create_folder, name='create_folder'),
+    path('buckets/<uuid:bucket_id>/rename/', bucket_views.rename_object, name='rename_object'),
+    path('buckets/<uuid:bucket_id>/delete-multiple/', bucket_views.delete_multiple_objects, name='delete_multiple_objects'),
 
     path('sso/callback/', views.sso_callback, name='sso_callback'),
     path('me/', views.me, name='me'),
-    path('instances/heartbeat/', views.receive_heartbeat, name='receive_heartbeat'),
+
+    # Heartbeat / bypass detection (SCRUM-260)
+    path('heartbeat/', views.heartbeat, name='heartbeat'),
+
+    # Alert Endpoints
+    path('alerts/', views.alert_list, name='alert_list'),
+    path('alerts/<uuid:alert_id>/read/', views.alert_mark_read, name='alert_mark_read'),
+    path('alerts/read-all/', views.alert_mark_all_read, name='alert_mark_all_read'),
 ]

@@ -22,6 +22,16 @@ app.conf.beat_schedule = {
         'task': 'api.tasks.backup_all_databases',
         'schedule': crontab(minute=0, hour=0), # Midnight every day
     },
+    'refresh-delayed-replicas-daily': {
+        # SCRUM-250: maintain a ~24h-behind delayed replica of every active DB.
+        'task': 'api.tasks.refresh_delayed_replicas',
+        'schedule': crontab(minute=0, hour=1),  # 01:00 every day
+    },
+    'check-stale-heartbeats-hourly': {
+        # SCRUM-260: alert on instances that stopped reporting a heartbeat.
+        'task': 'api.tasks.check_stale_heartbeats',
+        'schedule': crontab(minute=15),  # every hour at :15
+    },
     'replicate-new-nova-prod-to-dev-weekly': {
         'task': 'api.tasks.replicate_prod_to_dev',
         # Assuming we need to pass instance IDs. For automation, we'll need to fetch them dynamically,
