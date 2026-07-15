@@ -127,3 +127,27 @@ class SystemAlert(models.Model):
 
     def __str__(self):
         return f"{self.level.upper()}: {self.title}"
+
+
+class InstanceHeartbeat(models.Model):
+    """SCRUM-260: bypass detection via application-reported heartbeats.
+
+    Each provisioned app periodically reports a fingerprint of the DATABASE_URL it is actually
+    using (host/port/db only — never the password). Nidhi compares it to the fingerprint of the
+    instance it provisioned. A mismatch means the app fell back to SQLite / a hardcoded DB.
+    """
+    instance = models.OneToOneField(
+        DatabaseInstance, on_delete=models.CASCADE, related_name='heartbeat'
+    )
+    reported_fingerprint = models.CharField(max_length=64, blank=True, null=True)
+    expected_fingerprint = models.CharField(max_length=64, blank=True, null=True)
+    is_valid = models.BooleanField(default=True)
+    last_heartbeat_at = models.DateTimeField(null=True, blank=True)
+    last_alerted_at = models.DateTimeField(null=True, blank=True)
+    stale_alerted = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        state = 'OK' if self.is_valid else 'MISMATCH'
+        return f"Heartbeat {self.instance.db_name} ({state})"

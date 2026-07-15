@@ -34,6 +34,9 @@ urlpatterns = [
     path('sso/callback/', views.sso_callback, name='sso_callback'),
     path('me/', views.me, name='me'),
 
+    # Heartbeat / bypass detection (SCRUM-260)
+    path('heartbeat/', views.heartbeat, name='heartbeat'),
+
     # Alert Endpoints
     path('alerts/', views.alert_list, name='alert_list'),
     path('alerts/<uuid:alert_id>/read/', views.alert_mark_read, name='alert_mark_read'),

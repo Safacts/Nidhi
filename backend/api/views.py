@@ -13,7 +13,8 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from .models import DatabaseServer, Product, DatabaseInstance, DatabaseBackup, EmployeeProductAssignment, StorageBucket
+import hashlib
+from .models import DatabaseServer, Product, DatabaseInstance, DatabaseBackup, EmployeeProductAssignment, StorageBucket, InstanceHeartbeat, SystemAlert
 from .serializers import DatabaseServerSerializer, ProductSerializer, DatabaseInstanceSerializer, DatabaseBackupSerializer
 from .permissions import IsFoundingEngineer
 
@@ -406,3 +407,93 @@ def alert_mark_all_read(request):
     from .models import SystemAlert
     SystemAlert.objects.filter(is_read=False).update(is_read=True)
     return Response({"status": "all marked read"}, status=status.HTTP_200_OK)
+
+
+def compute_db_fingerprint(host, port, db_name):
+    """Deterministic fingerprint of a DB identity (no credentials). SCRUM-260."""
+    raw = f"{(host or '').strip().lower()}:{port}/{(db_name or '').strip().lower()}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+@api_view(['POST'])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def heartbeat(request):
+    """SCRUM-260: bypass detection.
+
+    Apps POST {project_slug, environment, database_fingerprint} periodically. The fingerprint is
+    a sha256 of host:port/db (NO password). Nidhi compares it to the instance it provisioned; a
+    mismatch means the app is NOT using its Nidhi database (SQLite/hardcoded fallback) and raises
+    a Telegram alert + SystemAlert.
+    """
+    from .tasks import send_telegram_alert
+
+    token = request.headers.get('Authorization', '')
+    expected_token = f"Bearer {getattr(settings, 'NIDHI_APP_API_KEY', 'super_secret_app_api_key_123')}"
+    if token != expected_token:
+        return Response({"error": "Unauthorized API key"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    project_slug = request.data.get('project_slug', '').lower().replace(' ', '_')
+    environment = request.data.get('environment', 'production').lower()
+    reported_fp = request.data.get('database_fingerprint', '')
+
+    if not project_slug or not reported_fp:
+        return Response(
+            {"error": "project_slug and database_fingerprint are required"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    product = Product.objects.filter(name__iexact=project_slug).first()
+    if not product:
+        return Response({"error": "Unknown project"}, status=status.HTTP_404_NOT_FOUND)
+
+    instance = DatabaseInstance.objects.filter(
+        product=product, server__environment_type=environment, is_deleted=False
+    ).first()
+    if not instance:
+        return Response({"error": "No provisioned instance for project/environment"},
+                        status=status.HTTP_404_NOT_FOUND)
+
+    expected_fp = compute_db_fingerprint(
+        instance.server.host, instance.server.port, instance.db_name
+    )
+    is_valid = (reported_fp == expected_fp)
+
+    hb, _ = InstanceHeartbeat.objects.get_or_create(instance=instance)
+    was_valid = hb.is_valid
+    hb.reported_fingerprint = reported_fp
+    hb.expected_fingerprint = expected_fp
+    hb.is_valid = is_valid
+    hb.last_heartbeat_at = timezone.now()
+    hb.stale_alerted = False
+    if not is_valid:
+        # Only alert on transition into an invalid state to avoid spam.
+        if was_valid or hb.last_alerted_at is None:
+            msg = (
+                f"🚨 *Nidhi Bypass Detected*\n"
+                f"App `{project_slug}` ({environment}) reported a database fingerprint that does "
+                f"NOT match its provisioned instance `{instance.db_name}`.\n"
+                f"It may be running on SQLite or a hardcoded database."
+            )
+            send_telegram_alert(msg)
+            SystemAlert.objects.create(
+                title=f"Database Bypass: {instance.db_name}",
+                message=(f"App {project_slug} ({environment}) reported fingerprint {reported_fp} "
+                         f"which does not match provisioned instance {instance.db_name}."),
+                level="error",
+            )
+            hb.last_alerted_at = timezone.now()
+    else:
+        if not was_valid:
+            send_telegram_alert(
+                f"✅ *Nidhi Recovery*\nApp `{project_slug}` ({environment}) is now using its "
+                f"provisioned database `{instance.db_name}` again."
+            )
+            SystemAlert.objects.create(
+                title=f"Database Bypass Resolved: {instance.db_name}",
+                message=f"App {project_slug} ({environment}) reconnected to {instance.db_name}.",
+                level="info",
+            )
+    hb.save()
+
+    return Response({"status": "ok", "valid": is_valid}, status=status.HTTP_200_OK)
