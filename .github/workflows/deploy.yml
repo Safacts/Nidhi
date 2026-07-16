@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - 'main' # CHECK YOUR BRANCH NAME (might be 'master' or 'krishna')
+      - 'development-v1' # Nidhi active dev branch — also trigger build/push here
 
 jobs:
   build_and_push:

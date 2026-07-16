@@ -1,0 +1,85 @@
+# Nidhi test gate — self-hosted runner (TESTING_STRATEGY.md #13 / #9 Status Board).
+# Runs the full pytest suite against a THROWAWAY Postgres:15 (port 5442) + Redis.
+# Provisioning tasks mock psycopg2.connect, so NOTHING touches the real
+# nidhi-db (5433) / nidhi-main_db (5435). Blocking: any test failure fails the job.
+#
+# DO NOT change runs-on away from the self-hosted runner (GitHub-hosted is
+# billing-blocked — see TESTING_STRATEGY #1).
+
+name: Nidhi Test Gate (self-hosted)
+
+on:
+  push:
+    branches: [development-v1, main]
+  pull_request:
+    branches: [main, development-v1]
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    runs-on: [self-hosted, linux, x64]
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: nidhi_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5442:5432
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    env:
+      DJANGO_SETTINGS_MODULE: nidhi_backend.test_settings
+      PYTHONPATH: backend:nidhi-sdk
+      NIDHI_TEST_DB_NAME: nidhi_test
+      NIDHI_TEST_DB_USER: postgres
+      NIDHI_TEST_DB_PASSWORD: postgres
+      NIDHI_TEST_DB_HOST: localhost
+      NIDHI_TEST_DB_PORT: "5442"
+      CELERY_BROKER_URL: redis://localhost:6379/0
+      SECRET_KEY: test-secret-key-not-for-prod
+      # App API key used by the heartbeat API test.
+      NIDHI_APP_API_KEY: test-api-key
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up venv
+        run: |
+          python3 -m venv /tmp/nidhi-test-venv
+          /tmp/nidhi-test-venv/bin/pip install --upgrade pip
+          /tmp/nidhi-test-venv/bin/pip install -r backend/requirements.txt
+          /tmp/nidhi-test-venv/bin/pip install pytest pytest-django dj-database-url pytest-cov
+
+      - name: Run pytest
+        run: |
+          /tmp/nidhi-test-venv/bin/python -m pytest -v --tb=short \
+            --junitxml=pytest-report.xml --cov=api --cov-report=term-missing
+
+  security:
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Security scan (bandit + safety)
+        continue-on-error: true   # tighten to hard-fail in Phase 2 (SCRUM-595)
+        run: |
+          python3 -m venv /tmp/nidhi-sec-venv
+          /tmp/nidhi-sec-venv/bin/pip install --upgrade pip
+          /tmp/nidhi-sec-venv/bin/pip install bandit safety
+          /tmp/nidhi-sec-venv/bin/bandit -r backend -ll \
+            --exclude '*/migrations,*/venv' || true
+          /tmp/nidhi-sec-venv/bin/safety check || true
