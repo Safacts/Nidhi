@@ -19,7 +19,7 @@ class RubixTokenAuthentication(BaseAuthentication):
         # Call the Rubix IdP introspection or userinfo endpoint
         # The main Django OAuth toolkit typically provides an introspection endpoint 
         # or we can simply verify it against a protected resource on Rubix
-        rubix_introspect_url = getattr(settings, 'RUBIX_INTROSPECT_URL', 'https://rubix.novamymentor.cloud/o/introspect/')
+        rubix_introspect_url = getattr(settings, 'RUBIX_INTROSPECT_URL', 'https://novamymentor.in/o/introspect/')
         
         data = {
             'token': token.decode('utf-8') if isinstance(token, bytes) else token,

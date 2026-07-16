@@ -27,7 +27,7 @@ def sso_callback(request):
     
     redirect_uri = request.data.get('redirect_uri', 'http://localhost:3000/auth/callback')
     
-    token_url = getattr(settings, 'RUBIX_TOKEN_URL', 'https://rubix.novamymentor.cloud/o/token/')
+    token_url = getattr(settings, 'RUBIX_TOKEN_URL', 'https://novamymentor.in/o/token/')
     data = {
         'grant_type': 'authorization_code',
         'code': code,
