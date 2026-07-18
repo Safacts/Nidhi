@@ -1,6 +1,7 @@
 # Founding Engineer: Aadisheshu <safacts001@gmail.com>
 import os
 import io
+import logging
 import psycopg2
 import requests
 import secrets
@@ -27,6 +28,8 @@ try:
 except ImportError:
     Minio = None
     S3Error = None
+
+logger = logging.getLogger(__name__)
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -605,7 +608,7 @@ def _get_minio_client_for_bucket(bucket):
 def serve_media(request, bucket_name, object_key):
     """
     Secure media proxy. Authenticates via NIDHI_APP_API_KEY (query param or header),
-    validates the requesting app owns the bucket, streams from MinIO.
+    validates bucket ownership, streams from MinIO. Never exposes MinIO directly.
 
     Usage: GET /api/media/<bucket_name>/<object_key>?api_key=<key>
 
@@ -618,13 +621,20 @@ def serve_media(request, bucket_name, object_key):
     api_key = request.GET.get('api_key', '') or request.headers.get('Authorization', '').replace('Bearer ', '')
     expected_key = getattr(settings, 'NIDHI_APP_API_KEY', 'super_secret_app_api_key_123')
     if not api_key or api_key != expected_key:
+        logger.warning("Media gateway: unauthorized access attempt for %s/%s", bucket_name, object_key)
         return Response({"error": "Unauthorized"}, status=status.HTTP_401_UNAUTHORIZED)
 
     # Look up bucket
     try:
-        bucket = StorageBucket.objects.get(bucket_name=bucket_name, status='available')
+        bucket = StorageBucket.objects.select_related('product').get(bucket_name=bucket_name, status='available')
     except StorageBucket.DoesNotExist:
+        logger.warning("Media gateway: bucket not found: %s", bucket_name)
         return Response({"error": "Bucket not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    # Ownership check: bucket must belong to an active product
+    if not bucket.product:
+        logger.warning("Media gateway: orphaned bucket %s (no product)", bucket_name)
+        return Response({"error": "Bucket has no associated product"}, status=status.HTTP_403_FORBIDDEN)
 
     # Fetch from MinIO
     try:
@@ -637,6 +647,14 @@ def serve_media(request, bucket_name, object_key):
         data = obj.read()
         obj.close()
         obj.release_conn()
+
+        # Log access: who (api_key hash), what (bucket/key), when, from where
+        ip = request.META.get('HTTP_X_FORWARDED_FOR', request.META.get('REMOTE_ADDR', ''))
+        key_hash = hashlib.sha256(api_key.encode()).hexdigest()[:12]
+        logger.info(
+            "Media access: key=%s bucket=%s object=%s product=%s ip=%s size=%d",
+            key_hash, bucket_name, object_key, bucket.product.name, ip, len(data),
+        )
 
         response = StreamingHttpResponse(
             io.BytesIO(data),
@@ -652,5 +670,6 @@ def serve_media(request, bucket_name, object_key):
     except Exception as e:
         if 'NoSuchKey' in str(e) or 'NoSuchKey' in str(type(e).__name__):
             return Response({"error": "Object not found"}, status=status.HTTP_404_NOT_FOUND)
+        logger.error("Media gateway: fetch failed for %s/%s: %s", bucket_name, object_key, e)
         return Response({"error": f"Media fetch failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
