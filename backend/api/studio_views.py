@@ -99,42 +99,72 @@ def get_table_data(request, instance_id, table_name):
 @api_view(['POST'])
 @permission_classes([IsFoundingEngineer])
 def execute_query(request, instance_id):
-    """Executes arbitrary SQL queries against the specific database."""
+    """Executes read-only SQL queries against the specific database.
+
+    NOTE (2026-07-18 data-safety hardening): this runner is READ-ONLY. DROP / TRUNCATE / DELETE /
+    ALTER / CREATE / UPDATE / INSERT are rejected. Schema changes must go through migrations, not
+    the Studio. Every execution is written to AuditLog for traceability.
+    """
+    from .models import AuditLog, is_production_environment
     instance = get_object_or_404(DatabaseInstance, id=instance_id, is_deleted=False)
-    
-    query = request.data.get('query')
+
+    query = (request.data.get('query') or '').strip()
     if not query:
         return Response({"error": "Query string is required."}, status=status.HTTP_400_BAD_REQUEST)
-        
+
+    # Reject any destructive / mutating statement.
+    forbidden = re.compile(
+        r"(DROP|TRUNCATE|DELETE|ALTER|CREATE|INSERT|UPDATE|RENAME|GRANT|REVOKE|COMMENT)",
+        re.IGNORECASE,
+    )
+    if forbidden.search(query):
+        AuditLog.objects.create(
+            actor_type='founding_engineer',
+            actor=getattr(request.user, 'username', 'unknown'),
+            action='execute_query',
+            target=instance.db_name,
+            server=instance.server.name,
+            detail='REJECTED destructive SQL (guarded): ' + query[:500],
+            success=False,
+        )
+        return Response(
+            {"error": "Mutating/DDL statements are blocked by the data-safety guard. "
+                      "Use migrations for schema changes."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
     conn = None
     try:
         conn = get_connection(instance)
-        # For DML/DDL we need to commit
         conn.autocommit = True
         cursor = conn.cursor()
-        
         cursor.execute(query)
-        
         rows = []
         columns = []
-        # If the query returns data, fetch it
         if cursor.description:
             columns = [desc.name for desc in cursor.description]
             rows = cursor.fetchall()
-            
         cursor.close()
-        
+        AuditLog.objects.create(
+            actor_type='founding_engineer',
+            actor=getattr(request.user, 'username', 'unknown'),
+            action='execute_query',
+            target=instance.db_name,
+            server=instance.server.name,
+            detail='SELECT executed: ' + query[:300],
+            success=True,
+        )
         return Response({
             "columns": columns,
             "rows": rows,
             "message": "Query executed successfully."
         }, status=status.HTTP_200_OK)
-        
     except Exception as e:
         return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
     finally:
         if conn:
             conn.close()
+
 
 import os
 import subprocess

@@ -152,12 +152,28 @@ def backup_single_database(instance_id):
         backup_record.file_size_bytes = os.path.getsize(backup_path)
         backup_record.save()
 
-        # Encrypt (persist locally) + upload to Telegram. Raises on hard failure.
-        local_enc_path = ship_encrypted_backup(backup_record.id, backup_path)
-        _rotate_local_encrypted(instance.db_name)
-
-        backup_record.status = 'completed'
-        backup_record.save()
+        # Encrypt (persist locally) + upload to Telegram. Raises if the off-site mirror fails.
+        try:
+            local_enc_path = ship_encrypted_backup(backup_record.id, backup_path)
+            _rotate_local_encrypted(instance.db_name)
+            backup_record.status = 'completed'
+            backup_record.save()
+        except Exception as ship_e:
+            backup_record.status = 'failed'
+            backup_record.save()
+            from .models import AuditLog
+            AuditLog.objects.create(
+                actor_type='system', actor='celery:backup_single_database',
+                action='backup_failed', target=instance.db_name, server=instance.server.name,
+                detail=f"Off-site (Telegram) upload failed: {str(ship_e)[:300]}", success=False,
+            )
+            send_telegram_alert(
+                f"🚨 *Nidhi Backup FAILED*\nBackup for `{instance.db_name}` could not be mirrored "
+                f"off-site (Telegram). Local encrypted copy may exist but off-site is MISSING.\n"
+                f"{str(ship_e)[:200]}"
+            )
+            logger.error(f"Backup off-site failure for {instance.db_name}: {ship_e}")
+            return
 
     except DatabaseInstance.DoesNotExist:
         pass
@@ -213,7 +229,9 @@ def ship_encrypted_backup(backup_id, dump_path):
                     except OSError:
                         pass
         except Exception as e:
-            logger.error(f"Telegram upload failed (local encrypted copy retained): {str(e)}")
+            # SCRUM data-safety (2026-07-17): a failed off-site mirror MUST NOT be reported as a
+            # successful backup. Raise so the caller marks the backup FAILED and alerts.
+            raise RuntimeError(f"Telegram off-site upload FAILED (local encrypted copy retained): {str(e)}")
     else:
         logger.warning("Telegram credentials not configured; keeping on-server encrypted backup only.")
 
@@ -279,6 +297,63 @@ def check_stale_heartbeats():
             stale += 1
     logger.info(f"Stale-heartbeat check complete: {stale} new alert(s).")
     return stale
+
+
+
+@shared_task
+def verify_database_liveness():
+    """SCRUM data-safety (post 2026-07-17 incident): actively verify each provisioned DB still
+    EXISTS and is CONNECTABLE on its data plane. Nidhi previously only trusted the 'available'
+    flag set at provision time, so a wiped data plane was reported AVAILABLE for days. This task
+    connects to every active instance, flips status to 'failed' when unreachable, and alerts."""
+    import psycopg2
+    from .models import AuditLog, SystemAlert
+
+    checked = 0
+    down = 0
+    for instance in DatabaseInstance.objects.filter(is_deleted=False):
+        checked += 1
+        server = instance.server
+        reachable = True
+        detail = ""
+        try:
+            conn = psycopg2.connect(
+                dbname="postgres", user=server.root_user, password=server.root_password,
+                host=server.host, port=server.port, connect_timeout=8,
+            )
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM pg_database WHERE datname = %s;", [instance.db_name])
+                exists = cur.fetchone() is not None
+            conn.close()
+            if not exists:
+                reachable = False
+                detail = f"DB '{instance.db_name}' no longer exists on {server.name}."
+        except Exception as e:
+            reachable = False
+            detail = f"Connect failed: {str(e)[:200]}"
+
+        expected_status = 'available' if reachable else 'failed'
+        if instance.status != expected_status:
+            instance.status = expected_status
+            instance.save(update_fields=['status'])
+            AuditLog.objects.create(
+                actor_type='system', actor='celery:verify_database_liveness',
+                action='liveness_changed', target=instance.db_name, server=server.name,
+                detail=detail or f"status-> {expected_status}", success=reachable,
+            )
+            msg = (f"🚨 *Nidhi DB Liveness Alert*\n"
+                   f"Instance `{instance.db_name}` on `{server.name}` is "
+                   f"{'UNREACHABLE' if not reachable else 'OK'}.\n{detail}")
+            send_telegram_alert(msg)
+            SystemAlert.objects.create(
+                title=f"DB Liveness: {instance.db_name}",
+                message=msg, level="error" if not reachable else "info",
+            )
+        if not reachable:
+            down += 1
+    logger.info(f"Liveness check complete: {checked} checked, {down} down.")
+    return {"checked": checked, "down": down}
 
 
 @shared_task

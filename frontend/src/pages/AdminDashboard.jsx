@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Database, Server, Copy, ShieldAlert, Zap, Plus, Package, User, Settings, CreditCard, ChevronDown, LogOut, HardDrive, ExternalLink } from 'lucide-react';
+import { Database, Server, Copy, ShieldAlert, Zap, Plus, Package, User, Settings, CreditCard, ChevronDown, LogOut, HardDrive, ExternalLink, History } from 'lucide-react';
 import { Logo } from '../components/Logo';
 import { ThemeToggle } from '../contexts/ThemeContext';
 import { NotificationBell } from '../components/NotificationBell';
@@ -13,6 +13,8 @@ const AdminDashboard = () => {
   const [products, setProducts] = useState([]);
   const [instances, setInstances] = useState([]);
   const [buckets, setBuckets] = useState([]);
+  const [backups, setBackups] = useState([]);
+  const [audit, setAudit] = useState([]);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const navigate = useNavigate();
   const { showToast } = useToast();
@@ -27,6 +29,7 @@ const AdminDashboard = () => {
     fetchInstances();
     fetchProducts();
     fetchBuckets();
+    fetchBackups();
   }, []);
 
   const getHeaders = () => {
@@ -59,6 +62,26 @@ const AdminDashboard = () => {
       if (res.ok) setProducts(await res.json());
       else if (res.status === 401 || res.status === 403) navigate('/login');
     } catch (e) { console.error(e); }
+  };
+
+  const fetchBackups = async () => {
+    try {
+      const token = localStorage.getItem('nidhi_token');
+      const res = await fetch('/api/backups/', { headers: { 'Authorization': `Bearer ${token}` } });
+      if (res.ok) {
+        const data = await res.json();
+        setBackups(data.backups || []);
+        setAudit(data.recent_audit || []);
+      }
+    } catch (e) { /* non-fatal */ }
+  };
+
+  const triggerBackup = async (id) => {
+    const token = localStorage.getItem('nidhi_token');
+    const res = await fetch(`/api/instances/${id}/backup/`, {
+      method: 'POST', headers: { 'Authorization': `Bearer ${token}` } });
+    if (res.ok) { showToast('Backup queued', 'success'); setTimeout(fetchBackups, 2000); }
+    else showToast('Failed to queue backup', 'error');
   };
 
   const fetchBuckets = async () => {
@@ -214,6 +237,12 @@ const AdminDashboard = () => {
         >
           <HardDrive className="inline w-4 h-4 mr-2" /> Storage Buckets
         </button>
+        <button 
+          onClick={() => { setActiveTab('backups'); fetchBackups(); }}
+          className={`px-4 py-2 rounded-lg font-medium transition-colors ${activeTab === 'backups' ? 'bg-slate-800 text-white dark:bg-slate-700' : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-300 dark:hover:bg-slate-700'}`}
+        >
+          <History className="inline w-4 h-4 mr-2" /> Backups
+        </button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
@@ -322,6 +351,51 @@ const AdminDashboard = () => {
               </div>
             </div>
           </>
+        )}
+
+        {activeTab === 'backups' && (
+          <div className="lg:col-span-4">
+            <h2 className="text-xl font-semibold mb-4 text-slate-700 dark:text-slate-300">Backup Monitoring &amp; Audit Trail</h2>
+            <p className="text-sm text-slate-500 mb-4">Daily encrypted backups run at midnight and mirror off-site to Telegram. A failed off-site mirror is now alerted and marked FAILED (never silently "completed").</p>
+            <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-slate-50 dark:bg-slate-800"><tr>
+                  <th className="p-3">Database</th><th className="p-3">Server</th><th className="p-3">DB Status</th>
+                  <th className="p-3">Last Backup</th><th className="p-3">Status</th><th className="p-3">Age (h)</th><th className="p-3">Action</th>
+                </tr></thead>
+                <tbody>
+                  {backups.map((b) => (
+                    <tr key={b.instance_id} className="border-t border-slate-100 dark:border-slate-700">
+                      <td className="p-3 font-medium">{b.db_name}</td>
+                      <td className="p-3">{b.server}</td>
+                      <td className="p-3">{b.status}</td>
+                      <td className="p-3">{b.latest_backup_at ? new Date(b.latest_backup_at).toLocaleString() : 'never'}</td>
+                      <td className="p-3">{b.latest_backup_status || '—'}</td>
+                      <td className="p-3">{b.age_hours ?? '—'}</td>
+                      <td className="p-3"><button onClick={() => triggerBackup(b.instance_id)} className="px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700">Backup now</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <h3 className="text-lg font-semibold mt-6 mb-2 text-slate-700 dark:text-slate-300">Recent Audit Trail</h3>
+            <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-slate-50 dark:bg-slate-800"><tr><th className="p-3">When</th><th className="p-3">Actor</th><th className="p-3">Action</th><th className="p-3">Target</th><th className="p-3">Result</th></tr></thead>
+                <tbody>
+                  {audit.map((a, i) => (
+                    <tr key={i} className="border-t border-slate-100 dark:border-slate-700">
+                      <td className="p-3">{new Date(a.at).toLocaleString()}</td>
+                      <td className="p-3">{a.actor}</td>
+                      <td className="p-3">{a.action}</td>
+                      <td className="p-3">{a.target}</td>
+                      <td className="p-3">{a.success ? 'OK' : 'FAIL'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         )}
 
         {activeTab === 'buckets' && (

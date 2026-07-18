@@ -1,6 +1,22 @@
 from django.db import models
 import uuid
 
+def is_production_environment():
+    """True when Nidhi is operating as the production control plane.
+    Destructive prod operations are gated on this so a dev/standby instance can never
+    accidentally wipe production data."""
+    import os
+    return os.environ.get("NIDHI_ENVIRONMENT", "development").lower() == "production"
+
+
+def prod_deletion_guard_enabled():
+    """Master kill-switch for the multi-level prod deletion protection.
+    Set NIDHI_ALLOW_PROD_DELETION=1 to disable guards (break-glass, audited)."""
+    import os
+    return os.environ.get("NIDHI_ALLOW_PROD_DELETION", "") not in ("1", "true", "yes")
+
+
+
 class DatabaseServer(models.Model):
     """Represents a remote physical server (Dev, Prod VPS)."""
     name = models.CharField(max_length=100, unique=True, help_text="e.g., Prod VPS 1, Dev Server")
@@ -111,6 +127,38 @@ class StorageBucket(models.Model):
 
     def __str__(self):
         return f"Bucket {self.bucket_name} ({self.status})"
+
+
+class AuditLog(models.Model):
+    """Nidhi Audit Trail (SCRUM data-safety): every provision / delete / backup / restore /
+    replicate / liveness-change action is recorded here so an operator can always trace WHO did
+    WHAT to WHICH database and WHEN. This is the traceability layer demanded after the
+    2026-07-17 production data-loss incident (anonymous-volume data plane wipe)."""
+    ACTOR_TYPES = [('founding_engineer', 'Founding Engineer'), ('system', 'System/Celery'), ('script', 'Maintenance Script')]
+    ACTION_TYPES = [
+        ('provision_db', 'Provision DB'), ('delete_db', 'Delete DB'), ('soft_delete_db', 'Soft Delete DB'),
+        ('restore_db', 'Restore DB'), ('replicate_db', 'Replicate DB'), ('backup_db', 'Backup DB'),
+        ('backup_failed', 'Backup Failed'), ('liveness_check', 'Liveness Check'),
+        ('liveness_changed', 'Liveness Changed'), ('provision_bucket', 'Provision Bucket'),
+        ('delete_bucket', 'Delete Bucket'), ('execute_query', 'Execute Query'), ('login', 'Login'),
+    ]
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    actor_type = models.CharField(max_length=30, choices=ACTOR_TYPES, default='system')
+    actor = models.CharField(max_length=255, help_text="username / 'system' / script name")
+    action = models.CharField(max_length=30, choices=ACTION_TYPES)
+    target = models.CharField(max_length=255, help_text="db_name / bucket_name / instance id")
+    server = models.CharField(max_length=255, blank=True, null=True)
+    detail = models.TextField(blank=True, null=True)
+    ip_address = models.GenericIPAddressField(blank=True, null=True)
+    success = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"[{self.created_at}] {self.actor} {self.action} {self.target}"
+
 
 class SystemAlert(models.Model):
     """System alerts for Nidhi dashboard."""

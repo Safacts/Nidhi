@@ -35,6 +35,11 @@ urlpatterns = [
     path('sso/callback/', views.sso_callback, name='sso_callback'),
     path('me/', views.me, name='me'),
 
+
+    # Backups monitoring + manual trigger (SCRUM data-safety UI)
+    path('backups/', views.backups_overview, name='backups_overview'),
+    path('instances/<uuid:instance_id>/backup/', views.trigger_backup, name='trigger_backup'),
+
     # Heartbeat / bypass detection (SCRUM-260)
     path('heartbeat/', views.heartbeat, name='heartbeat'),
 
@@ -42,4 +47,7 @@ urlpatterns = [
     path('alerts/', views.alert_list, name='alert_list'),
     path('alerts/<uuid:alert_id>/read/', views.alert_mark_read, name='alert_mark_read'),
     path('alerts/read-all/', views.alert_mark_all_read, name='alert_mark_all_read'),
+
+    # Media Gateway — authenticated media proxy (MinIO never exposed directly)
+    path('media/<str:bucket_name>/<path:object_key>', views.serve_media, name='serve_media'),
 ]

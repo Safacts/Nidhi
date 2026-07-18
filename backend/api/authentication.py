@@ -48,7 +48,7 @@ class RubixTokenAuthentication(BaseAuthentication):
             else:
                 # Fallback: if introspection is not available on Rubix, we might just call a protected endpoint
                 # like /api/user/ to see if the token is accepted.
-                profile_url = "http://172.21.0.1:8000/api/profile/" # example protected endpoint
+                profile_url = "https://novamymentor.in/api/profile/" # example protected endpoint
                 profile_resp = requests.get(profile_url, headers={'Authorization': f'Bearer {token}'}, timeout=5)
                 if profile_resp.status_code == 200:
                     profile_data = profile_resp.json()

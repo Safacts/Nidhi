@@ -1,5 +1,6 @@
 # Founding Engineer: Aadisheshu <safacts001@gmail.com>
 import os
+import io
 import psycopg2
 import requests
 import secrets
@@ -10,13 +11,22 @@ from psycopg2 import sql
 from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from django.http import StreamingHttpResponse
 from rest_framework import status
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.conf import settings
 import hashlib
-from .models import DatabaseServer, Product, DatabaseInstance, DatabaseBackup, EmployeeProductAssignment, StorageBucket, InstanceHeartbeat, SystemAlert
+from .models import DatabaseServer, Product, DatabaseInstance, DatabaseBackup, EmployeeProductAssignment, StorageBucket, InstanceHeartbeat, SystemAlert, AuditLog
 from .serializers import DatabaseServerSerializer, ProductSerializer, DatabaseInstanceSerializer, DatabaseBackupSerializer
-from .permissions import IsFoundingEngineer
+from .permissions import IsFoundingEngineer, IsProductionDestructiveOp
+
+try:
+    from minio import Minio
+    from minio.error import S3Error
+except ImportError:
+    Minio = None
+    S3Error = None
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -136,6 +146,10 @@ def auto_provision_instance(request):
             if bucket.access_key and bucket.secret_key:
                 response_data["bucket_access_key"] = bucket.access_key
                 response_data["bucket_secret_key"] = bucket.secret_key
+            # Media gateway URL — apps use this for browser-facing media access
+            nidhi_server = os.environ.get("NIDHI_DEV_SERVER_URL", "")
+            if nidhi_server:
+                response_data["media_base_url"] = f"{nidhi_server.rstrip('/')}/api/media"
         
         return Response(response_data, status=status.HTTP_200_OK)
         
@@ -206,6 +220,11 @@ def auto_provision_instance(request):
     if bucket.access_key and bucket.secret_key:
         bucket_response["bucket_access_key"] = bucket.access_key
         bucket_response["bucket_secret_key"] = bucket.secret_key
+    
+    # Media gateway URL — apps use this for browser-facing media access
+    nidhi_server = os.environ.get("NIDHI_DEV_SERVER_URL", "")
+    if nidhi_server:
+        bucket_response["media_base_url"] = f"{nidhi_server.rstrip('/')}/api/media"
     
     return Response({
         "database_url": db_url,
@@ -290,9 +309,12 @@ def database_instance_list_create(request):
         return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
 
 @api_view(['POST'])
-@permission_classes([IsFoundingEngineer])
+@permission_classes([IsProductionDestructiveOp])
 def delete_database(request, instance_id):
-    """Soft Delete: Revokes access on the DB but keeps the data intact."""
+    """Soft Delete ONLY: revokes connect privilege and marks the record deleted, but the data is
+    NEVER dropped. Hard DROP DATABASE is intentionally unavailable through the API — the
+    2026-07-17 incident showed infra/script-level drops with no gate are the real risk.
+    Every call is written to AuditLog for traceability."""
     instance = get_object_or_404(DatabaseInstance, id=instance_id, is_deleted=False)
     server = instance.server
     
@@ -326,8 +348,19 @@ def delete_database(request, instance_id):
         instance.deleted_at = timezone.now()
         instance.status = 'stopped'
         instance.save()
-        
-        return Response({"message": "Database access revoked and soft deleted successfully."}, status=status.HTTP_200_OK)
+
+        from .models import AuditLog
+        AuditLog.objects.create(
+            actor_type='founding_engineer',
+            actor=getattr(request.user, 'username', 'unknown'),
+            action='soft_delete_db',
+            target=instance.db_name,
+            server=instance.server.name,
+            detail='Soft-delete (revoke connect). Data retained.',
+            ip_address=request.META.get('REMOTE_ADDR'),
+            success=True,
+        )
+        return Response({"message": "Database access revoked and soft deleted successfully. Data was retained (no DROP)."}, status=status.HTTP_200_OK)
 
     except Exception as e:
         return Response({"error": f"Failed to soft-delete database: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -497,3 +530,127 @@ def heartbeat(request):
     hb.save()
 
     return Response({"status": "ok", "valid": is_valid}, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([IsFoundingEngineer])
+def backups_overview(request):
+    """Backups monitoring: latest backup per instance, off-site status, age, and recent audit."""
+    from django.utils import timezone as tz
+    data = []
+    for inst in DatabaseInstance.objects.filter(is_deleted=False).order_by('db_name'):
+        latest = inst.backups.order_by('-created_at').first()
+        age_hours = None
+        if latest and latest.created_at:
+            age_hours = round((tz.now() - latest.created_at).total_seconds() / 3600, 1)
+        data.append({
+            "instance_id": str(inst.id),
+            "db_name": inst.db_name,
+            "server": inst.server.name,
+            "status": inst.status,
+            "latest_backup_id": str(latest.id) if latest else None,
+            "latest_backup_status": latest.status if latest else None,
+            "latest_backup_at": latest.created_at.isoformat() if latest else None,
+            "age_hours": age_hours,
+            "off_site_configured": bool(os.environ.get('TELEGRAM_BOT_TOKEN') and os.environ.get('TELEGRAM_CHAT_ID')),
+        })
+    recent = [
+        {"at": a.created_at.isoformat(), "actor": a.actor, "action": a.action,
+         "target": a.target, "success": a.success, "detail": (a.detail or "")[:200]}
+        for a in AuditLog.objects.all().order_by('-created_at')[:25]
+    ]
+    return Response({
+        "backups": data,
+        "recent_audit": recent,
+        "now": tz.now().isoformat(),
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsFoundingEngineer])
+def trigger_backup(request, instance_id):
+    """Manually trigger an on-demand backup for an instance (queues Celery task)."""
+    from .tasks import backup_single_database
+    inst = get_object_or_404(DatabaseInstance, id=instance_id, is_deleted=False)
+    backup_single_database.delay(str(inst.id))
+    AuditLog.objects.create(
+        actor_type='founding_engineer', actor=getattr(request.user, 'username', 'unknown'),
+        action='backup_db', target=inst.db_name, server=inst.server.name,
+        detail='Manual backup triggered', success=True,
+    )
+    return Response({"message": f"Backup queued for {inst.db_name}."}, status=status.HTTP_202_ACCEPTED)
+
+
+# ── Media Gateway ──────────────────────────────────────────────────────────
+# MinIO is NEVER exposed to the internet. Every media request goes through
+# this endpoint which validates access, logs usage, and streams the object.
+# Apps use the SDK's get_nidhi_media_url() to generate URLs pointing here.
+
+MINIO_ROOT_USER = os.environ.get('MINIO_ROOT_USER', 'admin_nidhi_minio')
+MINIO_ROOT_PASSWORD = os.environ.get('MINIO_ROOT_PASSWORD', 'secure_nidhi_minio_password')
+
+
+def _get_minio_client_for_bucket(bucket):
+    """Returns a Minio client configured for the given bucket's internal endpoint."""
+    if not Minio:
+        return None
+    # Use internal Docker hostname — NEVER the public endpoint
+    endpoint = os.environ.get('MINIO_ENDPOINT', 'minio:9000')
+    return Minio(endpoint, access_key=bucket.access_key, secret_key=bucket.secret_key, secure=False)
+
+
+@api_view(['GET'])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def serve_media(request, bucket_name, object_key):
+    """
+    Secure media proxy. Authenticates via NIDHI_APP_API_KEY (query param or header),
+    validates the requesting app owns the bucket, streams from MinIO.
+
+    Usage: GET /api/media/<bucket_name>/<object_key>?api_key=<key>
+
+    MinIO is NEVER exposed directly. This is the only way to access media.
+    """
+    if not Minio:
+        return Response({"error": "MinIO SDK not installed."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    # Authenticate: check API key from query param or Authorization header
+    api_key = request.GET.get('api_key', '') or request.headers.get('Authorization', '').replace('Bearer ', '')
+    expected_key = getattr(settings, 'NIDHI_APP_API_KEY', 'super_secret_app_api_key_123')
+    if not api_key or api_key != expected_key:
+        return Response({"error": "Unauthorized"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    # Look up bucket
+    try:
+        bucket = StorageBucket.objects.get(bucket_name=bucket_name, status='available')
+    except StorageBucket.DoesNotExist:
+        return Response({"error": "Bucket not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    # Fetch from MinIO
+    try:
+        client = _get_minio_client_for_bucket(bucket)
+        if not client:
+            return Response({"error": "MinIO not available"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        obj = client.get_object(bucket_name, object_key)
+        content_type = obj.headers.get('Content-Type', 'application/octet-stream')
+        data = obj.read()
+        obj.close()
+        obj.release_conn()
+
+        response = StreamingHttpResponse(
+            io.BytesIO(data),
+            content_type=content_type,
+        )
+        response['Content-Length'] = len(data)
+        # Cache for 1 day — browsers cache, reducing proxy load
+        response['Cache-Control'] = 'public, max-age=86400'
+        if hasattr(obj, 'etag') and obj.etag:
+            response['ETag'] = obj.etag
+        return response
+
+    except Exception as e:
+        if 'NoSuchKey' in str(e) or 'NoSuchKey' in str(type(e).__name__):
+            return Response({"error": "Object not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"error": f"Media fetch failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+

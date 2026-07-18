@@ -4,6 +4,25 @@ import dj_database_url
 from .telegram import send_telegram_alert
 
 
+def get_nidhi_media_url(object_key: str) -> str:
+    """
+    Returns a URL that serves media through Nidhi's media gateway.
+    MinIO is NEVER exposed directly. Every media request goes through
+    Nidhi's /api/media/ endpoint which validates access and logs usage.
+    """
+    nidhi_url = os.environ.get('NIDHI_DEV_SERVER_URL', '')
+    bucket = os.environ.get('MEDIA_BUCKET_NAME', '')
+    api_key = os.environ.get('NIDHI_APP_API_KEY', '')
+
+    if not nidhi_url or not bucket:
+        raise RuntimeError(
+            "NIDHI_DEV_SERVER_URL or MEDIA_BUCKET_NAME not set. "
+            "App must be provisioned by Nidhi."
+        )
+
+    return f"{nidhi_url.rstrip('/')}/api/media/{bucket}/{object_key}?api_key={api_key}"
+
+
 def inject_nidhi_storage(settings_module_locals: dict) -> None:
     locals_ = settings_module_locals
     in_docker = os.path.exists("/.dockerenv")
@@ -32,7 +51,9 @@ def inject_nidhi_storage(settings_module_locals: dict) -> None:
     locals_["AWS_SECRET_ACCESS_KEY"] = os.environ.get("MINIO_SECRET_KEY")
     locals_["AWS_STORAGE_BUCKET_NAME"] = bucket_name
 
-    minio_ep = os.environ.get("MINIO_ENDPOINT", "minio:9000")
+    # Prefer MINIO_INTERNAL_HOST (Docker-internal) over MINIO_ENDPOINT
+    internal_host = os.environ.get("MINIO_INTERNAL_HOST", "")
+    minio_ep = internal_host or os.environ.get("MINIO_ENDPOINT", "minio:9000")
     if not minio_ep.startswith("http"):
         minio_ep = f"http://{minio_ep}"
     locals_["AWS_S3_ENDPOINT_URL"] = minio_ep

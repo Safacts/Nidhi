@@ -27,6 +27,13 @@ app.conf.beat_schedule = {
         'task': 'api.tasks.refresh_delayed_replicas',
         'schedule': crontab(minute=0, hour=1),  # 01:00 every day
     },
+    'verify-database-liveness-hourly': {
+        # SCRUM data-safety: actively confirm each provisioned DB still exists/connects.
+        # Previously Nidhi trusted the 'available' flag set at provision time, hiding the
+        # 2026-07-17 data-plane wipe for days.
+        'task': 'api.tasks.verify_database_liveness',
+        'schedule': crontab(minute=30),  # every hour at :30
+    },
     'check-stale-heartbeats-hourly': {
         # SCRUM-260: alert on instances that stopped reporting a heartbeat.
         'task': 'api.tasks.check_stale_heartbeats',
