@@ -73,8 +73,14 @@ class EncryptedCharField(models.CharField):
 
     def to_python(self, value):
         # Allow already-plaintext assignment (e.g. form input) without re-encrypting here;
-        # encryption happens in get_prep_value on save.
+        # encryption happens in get_db_prep_save on save.
         return value
+
+    def get_db_prep_save(self, value, connection):
+        # Always route through get_prep_value so existing plaintext rows are encrypted
+        # on save even when Django's change-detection sees identical (both decoded)
+        # in-memory and loaded values. get_prep_value skips already-prefixed values.
+        return self.get_prep_value(value)
 
 
 class DatabaseServer(models.Model):
