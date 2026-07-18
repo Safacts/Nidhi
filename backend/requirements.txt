@@ -13,3 +13,4 @@ celery
 redis
 django-celery-beat
 minio
+cryptography>=41.0.0

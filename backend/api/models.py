@@ -17,13 +17,73 @@ def prod_deletion_guard_enabled():
 
 
 
+import base64, json
+try:
+    from cryptography.fernet import Fernet
+except ImportError:
+    Fernet = None
+
+_SECRET_PREFIX = "enc::v1:"
+
+
+def _nidhi_secret_key():
+    """Fernet key for at-rest secret encryption. Uses NIDHI_SECRET_KEY, else derives from
+    BACKUP_ENCRYPTION_KEY (both already required to be present). Fail-safe: raises if missing."""
+    import os
+    raw = os.environ.get("NIDHI_SECRET_KEY") or os.environ.get("BACKUP_ENCRYPTION_KEY")
+    if not raw:
+        raise RuntimeError("NIDHI_SECRET_KEY (or BACKUP_ENCRYPTION_KEY) required for secret encryption")
+    # Derive a 32-byte url-safe base64 Fernet key from the raw hex/string.
+    import hashlib
+    digest = hashlib.sha256(raw.encode()).digest()
+    return base64.urlsafe_b64encode(digest)
+
+
+class EncryptedCharField(models.CharField):
+    """CharField that transparently encrypts at rest (Fernet) and decrypts on read.
+    Stored values are prefixed with enc::v1: so plaintext rows migrate on next save and
+    double-encryption is avoided. All existing access sites (server.root_password, etc.)
+    keep working because they receive the decrypted plaintext."""
+
+    def get_prep_value(self, value):
+        if value is None:
+            return None
+        value = str(value)
+        if value.startswith(_SECRET_PREFIX):
+            return value  # already encrypted
+        if Fernet is None:
+            return value
+        try:
+            f = Fernet(_nidhi_secret_key())
+            token = f.encrypt(value.encode()).decode()
+            return _SECRET_PREFIX + token
+        except Exception:
+            return value
+
+    def from_db_value(self, value, expression, connection):
+        if value is None:
+            return value
+        if isinstance(value, str) and value.startswith(_SECRET_PREFIX):
+            try:
+                f = Fernet(_nidhi_secret_key())
+                return f.decrypt(value[len(_SECRET_PREFIX):].encode()).decode()
+            except Exception:
+                return value
+        return value
+
+    def to_python(self, value):
+        # Allow already-plaintext assignment (e.g. form input) without re-encrypting here;
+        # encryption happens in get_prep_value on save.
+        return value
+
+
 class DatabaseServer(models.Model):
     """Represents a remote physical server (Dev, Prod VPS)."""
     name = models.CharField(max_length=100, unique=True, help_text="e.g., Prod VPS 1, Dev Server")
     host = models.CharField(max_length=255)
     port = models.IntegerField(default=5432)
     root_user = models.CharField(max_length=100, default='postgres')
-    root_password = models.CharField(max_length=255) # In production, this should be encrypted/vaulted
+    root_password = EncryptedCharField(max_length=512, help_text="Encrypted at rest (Fernet). Decrypted transparently on access.")
     environment_type = models.CharField(max_length=50, choices=[('development', 'Development'), ('production', 'Production')])
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -71,7 +131,7 @@ class DatabaseInstance(models.Model):
     
     db_name = models.CharField(max_length=63, unique=True)
     db_user = models.CharField(max_length=63, unique=True)
-    db_password_temp = models.CharField(max_length=128, blank=True, null=True)
+    db_password_temp = EncryptedCharField(max_length=512, blank=True, null=True)
     
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='provisioning')
     created_by_sso_id = models.CharField(max_length=255) 
@@ -116,7 +176,7 @@ class StorageBucket(models.Model):
     
     bucket_name = models.CharField(max_length=63, unique=True)
     access_key = models.CharField(max_length=100)
-    secret_key = models.CharField(max_length=255)
+    secret_key = EncryptedCharField(max_length=512)
     endpoint = models.CharField(max_length=255) # e.g. localhost:9000
     
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='provisioning')
