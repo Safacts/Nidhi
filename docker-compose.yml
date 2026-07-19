@@ -6,6 +6,10 @@ services:
     build: ./backend
     command: python manage.py runserver 0.0.0.0:8000
     volumes:
+      - /mnt/Storage/backups/:/host_backups
+      - /usr/local/bin/mc:/usr/local/bin/mc:ro
+      - /mnt/Storage/backups/minio:/backups_media/minio
+      - /mnt/Storage/backups/db:/backups_media/db
       - ./backend:/app
     ports:
       - "8001:8000" # Keep Nidhi on port 8001
@@ -23,6 +27,9 @@ services:
     volumes:
       - ./backend:/app
       - nidhi_backups:/backups
+      - /usr/local/bin/mc:/usr/local/bin/mc:ro
+      - /mnt/Storage/backups/minio:/backups_media/minio
+      - /mnt/Storage/backups/db:/backups_media/db
     env_file:
       - ./backend/.env
     depends_on:
@@ -36,6 +43,9 @@ services:
     volumes:
       - ./backend:/app
       - nidhi_backups:/backups
+      - /usr/local/bin/mc:/usr/local/bin/mc:ro
+      - /mnt/Storage/backups/minio:/backups_media/minio
+      - /mnt/Storage/backups/db:/backups_media/db
     env_file:
       - ./backend/.env
     depends_on:

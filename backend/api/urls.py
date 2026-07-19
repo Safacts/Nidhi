@@ -50,4 +50,13 @@ urlpatterns = [
 
     # Media Gateway — authenticated media proxy (MinIO never exposed directly)
     path('media/<str:bucket_name>/<path:object_key>', views.serve_media, name='serve_media'),
+    # MinIO Backup Monitoring
+    path('minio-backups/', views.minio_backups_overview, name='minio_backups_overview'),
+
+    # Cached Credentials (devserver-down recovery)
+    path('instances/<slug:project_slug>/<slug:environment>/credentials/', views.retrieve_cached_credentials, name='retrieve_cached_credentials'),
+    
+    # SCRUM-661: Bucket-to-bucket copy
+    path('buckets/<uuid:source_bucket_id>/copy-to/<uuid:dest_bucket_id>/', bucket_views.copy_bucket_objects, name='copy_bucket_objects'),
+
 ]

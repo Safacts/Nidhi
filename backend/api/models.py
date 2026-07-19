@@ -168,6 +168,45 @@ class DatabaseBackup(models.Model):
     def __str__(self):
         return f"Backup {self.id} for {self.instance.db_name}"
 
+class BackupStatus(models.Model):
+    """Nidhi-managed backup run ledger (SCRUM data-safety).
+
+    Replaces fragile host cron scripts. Every Nidhi-scheduled backup run (DB dump, MinIO media
+    mirror, DB copy-to-TB-disk) writes a row here so the control plane can report status, detect
+    staleness, and guarantee no backup silently stops. Code (VCS) drives the schedule, not the host.
+    """
+    KIND_CHOICES = [
+        ('db_dump', 'Database Dump'),
+        ('minio_media', 'MinIO Media Mirror'),
+        ('db_copy_tb', 'DB Copy to TB Disk'),
+    ]
+    STATUS_CHOICES = [
+        ('running', 'Running'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('partial', 'Partial'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES)
+    target = models.CharField(max_length=255, help_text="db_name or bucket_name or 'all'")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='running')
+    started_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    items_total = models.IntegerField(default=0)
+    items_ok = models.IntegerField(default=0)
+    items_failed = models.IntegerField(default=0)
+    bytes_transferred = models.BigIntegerField(default=0)
+    destination = models.CharField(max_length=500, blank=True, null=True,
+                                   help_text="e.g. /backups_media/minio/granth-production-media")
+    detail = models.TextField(blank=True, null=True)
+
+    class Meta:
+        ordering = ['-started_at']
+
+    def __str__(self):
+        return f"[{self.kind}] {self.target} -> {self.status} ({self.started_at})"
+
 class StorageBucket(models.Model):
     """An S3-compatible Object Storage bucket provisioned on MinIO."""
     STATUS_CHOICES = [

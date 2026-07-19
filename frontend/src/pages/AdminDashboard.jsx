@@ -14,6 +14,7 @@ const AdminDashboard = () => {
   const [instances, setInstances] = useState([]);
   const [buckets, setBuckets] = useState([]);
   const [backups, setBackups] = useState([]);
+  const [minioBackups, setMinioBackups] = useState(null);
   const [audit, setAudit] = useState([]);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const navigate = useNavigate();
@@ -30,7 +31,18 @@ const AdminDashboard = () => {
     fetchProducts();
     fetchBuckets();
     fetchBackups();
+    fetchMinioBackups();
   }, []);
+
+  // Continuous monitoring: auto-refresh backup views every 60s while visible
+  useEffect(() => {
+    if (activeTab !== 'backups' && activeTab !== 'minio-backups') return;
+    const id = setInterval(() => {
+      if (activeTab === 'backups') fetchBackups();
+      if (activeTab === 'minio-backups') fetchMinioBackups();
+    }, 60000);
+    return () => clearInterval(id);
+  }, [activeTab]);
 
   const getHeaders = () => {
     const token = localStorage.getItem('sso_token');
@@ -67,7 +79,7 @@ const AdminDashboard = () => {
   const fetchBackups = async () => {
     try {
       const token = localStorage.getItem('nidhi_token');
-      const res = await fetch('/api/backups/', { headers: { 'Authorization': `Bearer ${token}` } });
+      const res = await fetch('/nidhi-api/backups/', { headers: { 'Authorization': `Bearer ${token}` } });
       if (res.ok) {
         const data = await res.json();
         setBackups(data.backups || []);
@@ -76,9 +88,17 @@ const AdminDashboard = () => {
     } catch (e) { /* non-fatal */ }
   };
 
+  const fetchMinioBackups = async () => {
+    try {
+      const token = localStorage.getItem('nidhi_token');
+      const res = await fetch('/nidhi-api/minio-backups/', { headers: { 'Authorization': `Bearer ${token}` } });
+      if (res.ok) setMinioBackups(await res.json());
+    } catch (e) { /* non-fatal */ }
+  };
+
   const triggerBackup = async (id) => {
     const token = localStorage.getItem('nidhi_token');
-    const res = await fetch(`/api/instances/${id}/backup/`, {
+    const res = await fetch(`/nidhi-api/instances/${id}/backup/`, {
       method: 'POST', headers: { 'Authorization': `Bearer ${token}` } });
     if (res.ok) { showToast('Backup queued', 'success'); setTimeout(fetchBackups, 2000); }
     else showToast('Failed to queue backup', 'error');
@@ -243,6 +263,12 @@ const AdminDashboard = () => {
         >
           <History className="inline w-4 h-4 mr-2" /> Backups
         </button>
+        <button 
+          onClick={() => { setActiveTab('minio-backups'); fetchMinioBackups(); }}
+          className={`px-4 py-2 rounded-lg font-medium transition-colors ${activeTab === 'minio-backups' ? 'bg-slate-800 text-white dark:bg-slate-700' : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-300 dark:hover:bg-slate-700'}`}
+        >
+          <HardDrive className="inline w-4 h-4 mr-2" /> MinIO Backups
+        </button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
@@ -395,6 +421,111 @@ const AdminDashboard = () => {
                 </tbody>
               </table>
             </div>
+          </div>
+        )}
+
+        {activeTab === 'minio-backups' && (
+          <div className="lg:col-span-4">
+            <h2 className="text-xl font-semibold mb-4 text-slate-700 dark:text-slate-300">MinIO Backup Monitoring</h2>
+            <p className="text-sm text-slate-500 mb-4">Nidhi-managed daily mirror of all MinIO buckets from VPS to the devserver TB hard disk (02:30) plus a DB-to-TB copy (00:15). Continuously watched by the backup watchdog.</p>
+
+            {/* Health banner */}
+            {minioBackups?.health && (
+              <div className={`mb-6 rounded-xl border p-4 ${
+                minioBackups.health.overall === 'healthy'
+                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                  : 'border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300'
+              }`}>
+                <p className="font-semibold flex items-center gap-2">
+                  {minioBackups.health.overall === 'healthy' ? '✅ Backup system healthy' : '🚨 Backup system DEGRADED'}
+                </p>
+                <div className="mt-2 grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+                  <span>Media mirror: <b>{minioBackups.health.media_backup}</b>{minioBackups.health.media_age_hours != null ? ` (${minioBackups.health.media_age_hours}h ago)` : ''}</span>
+                  <span>DB→TB copy: <b>{minioBackups.health.db_copy}</b>{minioBackups.health.db_copy_age_hours != null ? ` (${minioBackups.health.db_copy_age_hours}h ago)` : ''}</span>
+                  <span>VPS MinIO: <b>{minioBackups.health.vps_minio}</b></span>
+                  <span>Dev MinIO: <b>{minioBackups.health.dev_minio}</b></span>
+                </div>
+              </div>
+            )}
+
+            {minioBackups ? (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                  <div className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl p-6 shadow">
+                    <p className="text-sm text-slate-500 dark:text-slate-400">Last Media Backup</p>
+                    <p className="text-2xl font-bold">{minioBackups.last_backup_at ? new Date(minioBackups.last_backup_at).toLocaleString() : 'Never'}</p>
+                    <p className={`text-sm ${minioBackups.last_backup_status === 'completed' || minioBackups.last_backup_status === 'partial' ? 'text-emerald-500' : 'text-red-500'}`}>
+                      {minioBackups.last_backup_status?.toUpperCase()}
+                    </p>
+                  </div>
+                  <div className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl p-6 shadow">
+                    <p className="text-sm text-slate-500 dark:text-slate-400">Backup Size (TB disk)</p>
+                    <p className="text-2xl font-bold">{minioBackups.backup_size_gb} GB</p>
+                    <p className="text-sm text-slate-400">{minioBackups.backup_objects} objects</p>
+                  </div>
+                  <div className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl p-6 shadow">
+                    <p className="text-sm text-slate-500 dark:text-slate-400">VPS Live (source)</p>
+                    <p className="text-2xl font-bold">{minioBackups.vps_live?.size_gb || '?'} GB</p>
+                    <p className="text-sm text-slate-400">{minioBackups.vps_live?.objects || '?'} objects</p>
+                  </div>
+                </div>
+
+                <h3 className="text-lg font-semibold mb-2 text-slate-700 dark:text-slate-300">Buckets (mirrored to TB disk)</h3>
+                <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-50 dark:bg-slate-800">
+                      <tr>
+                        <th className="p-3">Bucket</th>
+                        <th className="p-3">Objects</th>
+                        <th className="p-3">Size</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {minioBackups.buckets?.map((b, i) => (
+                        <tr key={i} className="border-t border-slate-100 dark:border-slate-700">
+                          <td className="p-3 font-medium">{b.bucket_name}</td>
+                          <td className="p-3">{b.objects}</td>
+                          <td className="p-3">{b.size_mb} MB</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <h3 className="text-lg font-semibold mt-6 mb-2 text-slate-700 dark:text-slate-300">Control-Plane Runs (Nidhi Celery)</h3>
+                <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-50 dark:bg-slate-800">
+                      <tr>
+                        <th className="p-3">Task</th>
+                        <th className="p-3">Status</th>
+                        <th className="p-3">Finished</th>
+                        <th className="p-3">OK / Fail</th>
+                        <th className="p-3">Transferred</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {minioBackups.control_plane_runs?.map((r, i) => (
+                        <tr key={i} className="border-t border-slate-100 dark:border-slate-700">
+                          <td className="p-3 font-medium">{r.kind}</td>
+                          <td className={`p-3 ${r.status === 'completed' ? 'text-emerald-500' : r.status === 'failed' ? 'text-red-500' : 'text-amber-500'}`}>{r.status}</td>
+                          <td className="p-3">{r.finished_at ? new Date(r.finished_at).toLocaleString() : '—'}</td>
+                          <td className="p-3">{r.items_ok} / {r.items_failed}</td>
+                          <td className="p-3">{(r.bytes_transferred / 1024 / 1024).toFixed(1)} MB</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="mt-4 text-sm text-slate-500 dark:text-slate-400">
+                  <p><strong>Location:</strong> {minioBackups.backup_location}</p>
+                  <p><strong>Schedule:</strong> {minioBackups.backup_schedule}</p>
+                </div>
+              </>
+            ) : (
+              <p className="text-slate-500">Loading backup status...</p>
+            )}
           </div>
         )}
 

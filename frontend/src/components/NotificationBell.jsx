@@ -18,7 +18,7 @@ export const NotificationBell = () => {
     try {
       const token = localStorage.getItem('sso_token');
       if (!token) return;
-      const response = await fetch('/api/alerts/', {
+      const response = await fetch('/nidhi-api/alerts/', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
@@ -78,7 +78,7 @@ export const NotificationBell = () => {
     e.stopPropagation();
     try {
       const token = localStorage.getItem('sso_token');
-      await fetch(`/api/alerts/${id}/read/`, {
+      await fetch(`/nidhi-api/alerts/${id}/read/`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -91,7 +91,7 @@ export const NotificationBell = () => {
   const markAllAsRead = async () => {
     try {
       const token = localStorage.getItem('sso_token');
-      await fetch('/api/alerts/read-all/', {
+      await fetch('/nidhi-api/alerts/read-all/', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });

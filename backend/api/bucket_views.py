@@ -541,3 +541,78 @@ def relocate_bucket(request, bucket_id):
         "endpoint": bucket.endpoint,
         "server_id": str(bucket.server.id) if bucket.server else None,
     }, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([IsFoundingEngineer])
+def copy_bucket_objects(request, source_bucket_id, dest_bucket_id):
+    """
+    SCRUM-661: Copy objects from one bucket to another (cross-MinIO supported).
+    Uses mc mirror under the hood for efficient transfer.
+    """
+    import subprocess, tempfile, os
+    
+    source = get_object_or_404(StorageBucket, id=source_bucket_id)
+    dest = get_object_or_404(StorageBucket, id=dest_bucket_id)
+    
+    sso_user_id = getattr(request, 'sso_user_id', None)
+    if not sso_user_id and request.user and request.user.is_authenticated:
+        sso_user_id = request.user.username
+    
+    prefix = request.data.get('prefix', '')
+    
+    try:
+        # Use mc mirror for efficient transfer
+        mc_alias_src = f'nidhi_src_{source.id.hex[:8]}'
+        mc_alias_dst = f'nidhi_dst_{dest.id.hex[:8]}'
+        
+        subprocess.run([
+            'mc', 'alias', 'set', mc_alias_src,
+            f'http://{source.endpoint}', source.access_key, source.secret_key
+        ], capture_output=True)
+        
+        subprocess.run([
+            'mc', 'alias', 'set', mc_alias_dst,
+            f'http://{dest.endpoint}', dest.access_key, dest.secret_key
+        ], capture_output=True)
+        
+        if prefix:
+            result = subprocess.run([
+                'mc', 'mirror', '--overwrite',
+                f'{mc_alias_src}/{source.bucket_name}/{prefix}',
+                f'{mc_alias_dst}/{dest.bucket_name}/{prefix}'
+            ], capture_output=True, text=True, timeout=3600)
+        else:
+            result = subprocess.run([
+                'mc', 'mirror', '--overwrite',
+                f'{mc_alias_src}/{source.bucket_name}',
+                f'{mc_alias_dst}/{dest.bucket_name}'
+            ], capture_output=True, text=True, timeout=3600)
+        
+        subprocess.run(['mc', 'alias', 'remove', mc_alias_src], capture_output=True)
+        subprocess.run(['mc', 'alias', 'remove', mc_alias_dst], capture_output=True)
+        
+        if result.returncode != 0:
+            return Response({
+                "error": f"Copy failed: {result.stderr[:500]}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        from .models import AuditLog
+        AuditLog.objects.create(
+            actor_type='founding_engineer', actor=sso_user_id or 'unknown',
+            action='copy_bucket', target=f'{source.bucket_name} -> {dest.bucket_name}',
+            detail=f'Copied via mc mirror (prefix={prefix or "all"})', success=True,
+        )
+        
+        return Response({
+            "message": "Bucket copy completed",
+            "source": source.bucket_name,
+            "destination": dest.bucket_name,
+            "prefix": prefix or '(all)',
+            "output": result.stdout[:500],
+        }, status=status.HTTP_200_OK)
+        
+    except subprocess.TimeoutExpired:
+        return Response({"error": "Copy timed out (>1 hour)"}, status=status.HTTP_408_REQUEST_TIMEOUT)
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

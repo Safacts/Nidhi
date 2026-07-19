@@ -186,11 +186,16 @@ def auto_provision_instance(request):
 
     bucket_name = f"{project_slug}-{environment}-media"[:63]
     
-    # All buckets (dev + prod) use Nidhi MinIO on the control plane server.
-    # Production containers reach it via Tailscale. Do NOT assign buckets to the
-    # VPS (it has no MinIO — only PostgreSQL via nidhi-live-data-plane).
+    # Production buckets -> VPS MinIO; dev buckets -> devserver MinIO.
+    if environment == "production":
+        bucket_endpoint = os.environ.get("PRODUCTION_MINIO_ENDPOINT", "72.60.218.127:9000")
+    elif environment == "development":
+        bucket_endpoint = os.environ.get("PUBLIC_MINIO_ENDPOINT", "100.83.65.7:9000")
+    else:
+        # Default to devserver MinIO (laptop/local, future unknown environments)
+        bucket_endpoint = os.environ.get("PUBLIC_MINIO_ENDPOINT", "100.83.65.7:9000")
     bucket_server = None
-    bucket_endpoint = os.environ.get("PUBLIC_MINIO_ENDPOINT", "localhost:9000")
+
 
     MINIO_ROOT_USER = os.environ.get('MINIO_ROOT_USER', 'admin_nidhi_minio')
     MINIO_ROOT_PASSWORD = os.environ.get('MINIO_ROOT_PASSWORD', 'secure_nidhi_minio_password')
@@ -594,11 +599,12 @@ MINIO_ROOT_PASSWORD = os.environ.get('MINIO_ROOT_PASSWORD', 'secure_nidhi_minio_
 
 
 def _get_minio_client_for_bucket(bucket):
-    """Returns a Minio client configured for the given bucket's internal endpoint."""
+    """Returns a Minio client configured for the given bucket's stored endpoint."""
     if not Minio:
         return None
-    # Use internal Docker hostname — NEVER the public endpoint
-    endpoint = os.environ.get('MINIO_ENDPOINT', 'minio:9000')
+    endpoint = bucket.endpoint
+    if endpoint in ('localhost:9000', 'minio:9000', '127.0.0.1:9000'):
+        endpoint = os.environ.get('MINIO_ENDPOINT', '100.83.65.7:9000')
     return Minio(endpoint, access_key=bucket.access_key, secret_key=bucket.secret_key, secure=False)
 
 
@@ -673,3 +679,202 @@ def serve_media(request, bucket_name, object_key):
         logger.error("Media gateway: fetch failed for %s/%s: %s", bucket_name, object_key, e)
         return Response({"error": f"Media fetch failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
+
+@api_view(['GET'])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def minio_backups_overview(request):
+    """Returns MinIO backup status — last pull time, size, bucket-level summary."""
+    # Auth: accept either app API key or valid SSO token
+    api_key = request.GET.get('api_key', '') or request.headers.get('Authorization', '').replace('Bearer ', '')
+    expected_key = getattr(settings, 'NIDHI_APP_API_KEY', 'super_secret_app_api_key_123')
+    if not api_key or api_key != expected_key:
+        # Fallback: check SSO token via IsFoundingEngineer manual check
+        from .permissions import IsFoundingEngineer
+        perm = IsFoundingEngineer()
+        if not perm.has_permission(request, None):
+            return Response({"error": "Unauthorized"}, status=status.HTTP_401_UNAUTHORIZED)
+    
+    from datetime import datetime, timedelta
+    from .models import BackupStatus, StorageBucket
+
+    now = timezone.now()
+
+    def _last_run(kind):
+        return BackupStatus.objects.filter(kind=kind).order_by('-started_at').first()
+
+    def _staleness_hours(run):
+        if not run or not run.finished_at:
+            return None
+        return round((now - run.finished_at).total_seconds() / 3600, 1)
+
+    # ---- Nidhi control-plane ledger (source of truth, replaces host cron log) ----
+    media_run = _last_run('minio_media')
+    dbcopy_run = _last_run('db_copy_tb')
+
+    # Staleness: media expected daily ~02:30, db-copy daily ~00:15. Alert if >26h since success.
+    media_age = _staleness_hours(media_run)
+    dbcopy_age = _staleness_hours(dbcopy_run)
+    STALE_HOURS = 26
+
+    media_healthy = bool(media_run and media_run.status in ('completed', 'partial') and media_age is not None and media_age < STALE_HOURS)
+    dbcopy_healthy = bool(dbcopy_run and dbcopy_run.status == 'completed' and dbcopy_age is not None and dbcopy_age < STALE_HOURS)
+    overall_healthy = media_healthy and dbcopy_healthy
+
+    # Bucket-level on-disk summary (TB disk mirror)
+    backup_dir = '/host_backups/minio/'
+    buckets = []
+    total_size = 0
+    total_objects = 0
+    try:
+        if os.path.isdir(backup_dir):
+            for bname in sorted(os.listdir(backup_dir)):
+                bpath = os.path.join(backup_dir, bname)
+                if os.path.isdir(bpath):
+                    size = count = 0
+                    for root, dirs, files in os.walk(bpath):
+                        for f in files:
+                            fp = os.path.join(root, f)
+                            try:
+                                size += os.path.getsize(fp)
+                                count += 1
+                            except OSError:
+                                pass
+                    total_size += size
+                    total_objects += count
+                    buckets.append({
+                        'bucket_name': bname,
+                        'objects': count,
+                        'size_bytes': size,
+                        'size_mb': round(size / 1024 / 1024, 2),
+                    })
+    except Exception:
+        pass
+
+    # VPS MinIO live source status
+    live_objects = live_size = 0
+    vps_healthy = dev_healthy = False
+    try:
+        from minio import Minio as MinioClient
+        prod = MinioClient('72.60.218.127:9000', access_key='admin_nidhi_minio',
+                           secret_key='secure_nidhi_minio_password', secure=False)
+        prod.list_buckets()
+        vps_healthy = True
+        for bname in ['aacharya-production-media', 'abhyas-production-media',
+                      'granth-production-media', 'new-nova-production-media',
+                      'rubixdocs-production-media', 'vitharn-production-media']:
+            try:
+                objs = list(prod.list_objects(bname, recursive=True))
+                live_objects += len(objs)
+                live_size += sum(o.size for o in objs)
+            except Exception:
+                pass
+    except Exception:
+        vps_healthy = False
+    try:
+        dev = MinioClient('172.21.0.1:9000', access_key='admin_nidhi_minio',
+                          secret_key='secure_nidhi_minio_password', secure=False)
+        dev.list_buckets()
+        dev_healthy = True
+    except Exception:
+        dev_healthy = False
+
+    # Recent control-plane runs for the UI feed
+    recent_runs = []
+    try:
+        for r in BackupStatus.objects.filter(kind__in=['minio_media', 'db_copy_tb']).order_by('-started_at')[:10]:
+            recent_runs.append({
+                'kind': r.kind,
+                'target': r.target,
+                'status': r.status,
+                'started_at': r.started_at.isoformat(),
+                'finished_at': r.finished_at.isoformat() if r.finished_at else None,
+                'items_ok': r.items_ok,
+                'items_failed': r.items_failed,
+                'bytes_transferred': r.bytes_transferred,
+                'destination': r.destination,
+            })
+    except Exception:
+        recent_runs = []
+
+    return Response({
+        'last_backup_at': media_run.finished_at.isoformat() if media_run and media_run.finished_at else None,
+        'last_backup_status': media_run.status if media_run else 'never',
+        'backup_directory': backup_dir,
+        'backup_size_bytes': total_size,
+        'backup_size_gb': round(total_size / 1024 / 1024 / 1024, 2),
+        'backup_objects': total_objects,
+        'buckets': buckets,
+        'vps_live': {
+            'objects': live_objects,
+            'size_bytes': live_size,
+            'size_gb': round(live_size / 1024 / 1024 / 1024, 2),
+        },
+        'health': {
+            'overall': 'healthy' if overall_healthy else 'DEGRADED',
+            'media_backup': 'healthy' if media_healthy else 'STALE/FAILED',
+            'db_copy': 'healthy' if dbcopy_healthy else 'STALE/FAILED',
+            'vps_minio': 'healthy' if vps_healthy else 'DOWN',
+            'dev_minio': 'healthy' if dev_healthy else 'DOWN',
+            'media_age_hours': media_age,
+            'db_copy_age_hours': dbcopy_age,
+            'checked_at': now.isoformat(),
+        },
+        'backup_schedule': 'Nidhi-managed (Celery beat): minio_media 02:30 daily, db_copy_tb 00:15 daily',
+        'backup_location': '/host_backups/minio/ (devserver TB hard disk)',
+        'control_plane_runs': recent_runs,
+    }, status=status.HTTP_200_OK)
+@api_view(['GET'])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def retrieve_cached_credentials(request, project_slug, environment):
+    """
+    Returns credentials for an already-provisioned product instance.
+    Use this when devserver was down and app needs to re-fetch credentials
+    WITHOUT triggering auto-provision (which creates new resources).
+    """
+    from .models import Product, DatabaseInstance, StorageBucket
+    
+    project_slug = project_slug.lower().replace(' ', '_')
+    environment = environment.lower()
+    
+    # Auth check
+    token = request.headers.get('Authorization', '')
+    expected_token = f"Bearer {getattr(settings, 'NIDHI_APP_API_KEY', 'super_secret_app_api_key_123')}"
+    if token != expected_token:
+        return Response({"error": "Unauthorized"}, status=status.HTTP_401_UNAUTHORIZED)
+    
+    product = Product.objects.filter(name__iexact=project_slug).first()
+    if not product:
+        return Response({"error": f"No product found for '{project_slug}'"}, status=status.HTTP_404_NOT_FOUND)
+    
+    # Look up existing instance (do NOT create)
+    instance = DatabaseInstance.objects.filter(
+        product=product,
+        server__environment_type=environment,
+        is_deleted=False
+    ).first()
+    
+    if not instance:
+        return Response({"error": f"No {environment} instance found for '{project_slug}'. Use auto-provision to create one."}, status=status.HTTP_404_NOT_FOUND)
+    
+    db_url = f"postgres://{instance.db_user}:{instance.db_password_temp}@{instance.server.host}:{instance.server.port}/{instance.db_name}"
+    
+    bucket = StorageBucket.objects.filter(
+        product=product,
+        bucket_name__endswith="-" + environment + "-media",
+        status='available'
+    ).first()
+    
+    result = {"database_url": db_url}
+    
+    if bucket:
+        result["bucket_name"] = bucket.bucket_name
+        result["bucket_endpoint"] = bucket.endpoint
+        result["bucket_id"] = str(bucket.id)
+        if bucket.access_key and bucket.secret_key:
+            result["bucket_access_key"] = bucket.access_key
+            result["bucket_secret_key"] = bucket.secret_key
+    
+    return Response(result, status=status.HTTP_200_OK)

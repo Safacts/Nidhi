@@ -29,8 +29,6 @@ app.conf.beat_schedule = {
     },
     'verify-database-liveness-hourly': {
         # SCRUM data-safety: actively confirm each provisioned DB still exists/connects.
-        # Previously Nidhi trusted the 'available' flag set at provision time, hiding the
-        # 2026-07-17 data-plane wipe for days.
         'task': 'api.tasks.verify_database_liveness',
         'schedule': crontab(minute=30),  # every hour at :30
     },
@@ -41,12 +39,32 @@ app.conf.beat_schedule = {
     },
     'replicate-new-nova-prod-to-dev-weekly': {
         'task': 'api.tasks.replicate_prod_to_dev',
-        # Assuming we need to pass instance IDs. For automation, we'll need to fetch them dynamically,
-        # but let's just use the known IDs for now, or use a new wrapper task.
-        # It's better to create a wrapper task that finds prod instances and replicates them.
-        # But for now, we'll just add the schedule entry.
         'schedule': crontab(minute=0, hour=2, day_of_week='sun'), # Sunday 2 AM
-        'args': (4, 1, 'new_nova_dev'), # prod_instance_id=4, dev_server_id=1, new_db_name='new_nova_dev'
+        'args': (4, 1, 'new_nova_dev'),
+    },
+    'check-minio-health-every-5-min': {
+        'task': 'api.tasks.check_minio_health',
+        'schedule': crontab(minute='*/5'),  # Every 5 minutes
+    },
+    'send-ai-alert-summary-every-30-min': {
+        'task': 'api.tasks.send_ai_alert_summary',
+        'schedule': crontab(minute='*/30'),  # Every 30 minutes
+    },
+    # Continuous backup watchdog — alerts if a backup run is stale/failed/missing
+    'monitor-backup-health-hourly': {
+        'task': 'api.tasks.monitor_backup_health',
+        'schedule': crontab(minute=45),  # every hour at :45
+    },
+    # --- Nidhi-managed backup control plane (replaces host cron) ---
+    'backup-minio-media-nightly': {
+        # Mirror all prod MinIO buckets to devserver TB disk. Runs after DB dumps.
+        'task': 'api.tasks.backup_all_minio_media',
+        'schedule': crontab(minute=30, hour=2),  # 02:30 every day
+    },
+    'copy-db-backups-to-tb-disk-nightly': {
+        # Copy encrypted DB dumps (volume) to durable TB disk copy.
+        'task': 'api.tasks.copy_db_backups_to_tb_disk',
+        'schedule': crontab(minute=15, hour=0),  # 00:15 every day (after midnight DB dump)
     },
 }
 

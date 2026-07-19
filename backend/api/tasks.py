@@ -1,5 +1,7 @@
+import re
 import os
 import subprocess
+import pathlib
 import requests
 import logging
 from datetime import datetime, timedelta
@@ -238,7 +240,7 @@ def ship_encrypted_backup(backup_id, dump_path):
     return enc_path
 
 
-def send_telegram_alert(message: str):
+def send_telegram_alert(message: str, parse_mode='Markdown'):
     """Generic function to send a Telegram alert message."""
     telegram_bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
     telegram_chat_id = os.environ.get('TELEGRAM_CHAT_ID')
@@ -248,16 +250,24 @@ def send_telegram_alert(message: str):
         return
         
     telegram_url = f"https://api.telegram.org/bot{telegram_bot_token}/sendMessage"
-    payload = {
-        'chat_id': telegram_chat_id,
-        'text': message,
-        'parse_mode': 'Markdown'
-    }
+    
+    def _send(pm):
+        payload = {
+            'chat_id': telegram_chat_id,
+            'text': message,
+        }
+        if pm:
+            payload['parse_mode'] = pm
+        resp = requests.post(telegram_url, json=payload, timeout=10)
+        return resp
     
     try:
-        response = requests.post(telegram_url, json=payload, timeout=10)
+        response = _send(parse_mode)
         if response.status_code != 200:
-            logger.error(f"Failed to send Telegram alert: {response.text}")
+            if parse_mode:
+                response = _send(None)
+            if response.status_code != 200:
+                logger.error(f"Failed to send Telegram alert: {response.text}")
     except Exception as e:
         logger.error(f"Telegram alert request failed: {str(e)}")
 
@@ -727,13 +737,16 @@ def provision_bucket_task(bucket_id):
             # Run command. We ignore errors if container already exists, but we can try to start it just in case
             subprocess.run(ssh_cmd + docker_cmd, shell=True, check=False)
             subprocess.run(ssh_cmd + "'docker start nidhi-minio-plane 2>/dev/null || true'", shell=True, check=False)
-            
-            # Wait for MinIO to start
-            time.sleep(5)
+        # Use bucket.endpoint if already set, otherwise derive from server or env
+        if bucket.endpoint:
+            endpoint = bucket.endpoint
+        elif bucket.server:
+            # Production: Use VPS MinIO
+            endpoint = f"{bucket.server.host}:9000"
         else:
             # Development: Use local MinIO container
-            endpoint = os.environ.get('MINIO_ENDPOINT', 'minio:9000')
-            
+            endpoint = os.environ.get("MINIO_ENDPOINT", "minio:9000")
+
         client = Minio(
             endpoint,
             access_key=MINIO_ROOT_USER,
@@ -811,3 +824,335 @@ def external_db_migration_task(instance_id, source_uri):
     except Exception as e:
         print(f"Migration failed: {str(e)}")
         return None
+
+
+@shared_task
+def check_minio_health():
+    """Periodically check if MinIO instances are healthy and alert on failures."""
+    from .models import SystemAlert
+    from minio import Minio
+    from minio.error import S3Error
+    import os
+
+    results = []
+    vps_endpoint = os.environ.get('VPS_MINIO_ENDPOINT', '72.60.218.127:9000')
+    dev_endpoint = os.environ.get('DEV_MINIO_ENDPOINT', '100.83.65.7:9000')
+    access_key = os.environ.get('MINIO_ACCESS_KEY', 'admin_nidhi_minio')
+    secret_key = os.environ.get('MINIO_SECRET_KEY', 'secure_nidhi_minio_password')
+    
+    # Check VPS MinIO (production)
+    vps_ok = False
+    try:
+        client = Minio(vps_endpoint, access_key=access_key, secret_key=secret_key, secure=False)
+        buckets = list(client.list_buckets())
+        vps_ok = len(buckets) >= 6
+        results.append(f"VPS MinIO: OK ({len(buckets)} buckets)")
+    except Exception as e:
+        results.append(f"VPS MinIO: DOWN - {str(e)[:100]}")
+        SystemAlert.objects.create(
+            title='VPS MinIO DOWN',
+            message=f'Production MinIO at {vps_endpoint} is unreachable: {str(e)[:200]}',
+            level='error'
+        )
+        send_telegram_alert(
+            chr(128165) + " *MinIO DOWN*\nVPS MinIO (" + vps_endpoint + ") is unreachable!\n" + str(e)[:200]
+        )
+
+    # Check devserver MinIO (development)
+    dev_ok = False
+    try:
+        client = Minio(dev_endpoint, access_key=access_key, secret_key=secret_key, secure=False)
+        buckets = list(client.list_buckets())
+        dev_ok = len(buckets) >= 5
+        results.append(f"Dev MinIO: OK ({len(buckets)} buckets)")
+    except Exception as e:
+        results.append(f"Dev MinIO: DOWN - {str(e)[:100]}")
+        SystemAlert.objects.create(
+            title='Dev MinIO DOWN',
+            message=f'Dev MinIO at {dev_endpoint} is unreachable: {str(e)[:200]}',
+            level='error'
+        )
+        send_telegram_alert(
+            chr(9888) + chr(65039) + " *MinIO DOWN*\nDev MinIO (" + dev_endpoint + ") is unreachable!\n" + str(e)[:200]
+        )
+
+    logger.info(f"MinIO health check: {' | '.join(results)}")
+    return results
+
+
+
+@shared_task
+def send_ai_alert_summary():
+    """Collect recent unread alerts, draft a summary via Gemma 4, send to Telegram."""
+    from datetime import timedelta
+    from django.utils import timezone
+    from .models import SystemAlert
+
+    cutoff = timezone.now() - timedelta(hours=6)
+    base_qs = SystemAlert.objects.filter(created_at__gte=cutoff, is_read=False)
+    total = base_qs.count()
+
+    if total == 0:
+        logger.info('No unread alerts in last 6h - skipping AI summary')
+        return
+
+    error_count = base_qs.filter(level='error').count()
+    warning_count = base_qs.filter(level='warning').count()
+    info_count = base_qs.filter(level='info').count()
+
+    alerts = base_qs.order_by('-created_at')[:20]
+
+    header = (
+        f"\U0001f916 Nidhi Alert Report\n"
+        f"{total} alerts \u2022 "
+        f"{error_count} \U0001f534 {warning_count} \U0001f7e1 {info_count} \U0001f535\n"
+        f"-------------------------\n"
+    )
+
+    # Send only 10 most recent alerts to LLM with short messages to avoid timeout
+    alert_lines = []
+    for a in alerts[:10]:
+        alert_lines.append(f"[{a.level.upper()}] {a.title[:80]}: {a.message[:100]}")
+    alert_text = "\n".join(alert_lines)
+
+    llm_url = os.environ.get('LLM_API_URL', 'http://72.60.218.127:8080/v1/chat/completions')
+    llm_model = os.environ.get('LLM_MODEL', '/models/gemma-4-E4B-it-Q4_K_M.gguf')
+
+    system_prompt = (
+        "You are Nidhi, an AI SRE assistant. "
+        "Summarize these system alerts concisely for a Telegram message. "
+        "Plain text only - no formatting, no markdown, no HTML. "
+        "Group by severity, suggest causes. Max 800 chars. - Nidhi AI"
+    )
+
+    payload = {
+        'model': llm_model,
+        'messages': [
+            {'role': 'system', 'content': system_prompt},
+            {'role': 'user', 'content': f'Alerts:\n{alert_text}'}
+        ],
+        'temperature': 0.3,
+        'max_tokens': 300,
+    }
+
+    try:
+        resp = requests.post(llm_url, json=payload, timeout=180)
+        resp.raise_for_status()
+        data = resp.json()
+        drafted = data['choices'][0]['message']['content']
+        # Strip model tokens
+        drafted = drafted.split('<|im_end|>')[0].split('<|im_start|>')[0].strip()
+        # Sanitize Markdown for Telegram compatibility
+        import re
+        drafted = re.sub(r'^#{1,6}\s*', '', drafted, flags=re.MULTILINE)  # remove headings
+        drafted = re.sub(r'\n-{3,}\n*', '\n', drafted)  # remove --- lines
+        drafted = re.sub(r'\*\*(.+?)\*\*', r'*\1*', drafted)  # **bold** -> *bold*
+        # Remove bullet markers (* at line start) — Telegram Markdown doesn't support lists
+        drafted = re.sub(r'^\*\s+', '', drafted, flags=re.MULTILINE)
+        # Collapse 3+ consecutive newlines into 2
+        drafted = re.sub(r'\n{3,}', '\n\n', drafted)
+        drafted = drafted.strip()
+    except Exception as e:
+        logger.error(f'AI drafting failed: {e}')
+        drafted = (
+            f"*Nidhi Alert Summary*\n"
+            f"{total} unread alerts in last 6h. "
+            f"{error_count} errors, {warning_count} warnings.\n"
+            f"AI drafting unavailable - raw stats above."
+        )
+
+
+
+@shared_task
+def monitor_backup_health():
+    """Continuous backup watchdog (SCRUM data-safety).
+
+    Verifies the Nidhi-managed backup control plane is actually producing fresh,
+    successful backups. A stale or failed run raises a SystemAlert + Telegram page so a
+    silent backup stop is never missed. Runs hourly via Celery beat.
+    """
+    from .models import BackupStatus, SystemAlert
+    now = timezone.now()
+    STALE_HOURS = 26
+
+    def _last(kind):
+        return BackupStatus.objects.filter(kind=kind).order_by('-started_at').first()
+
+    problems = []
+    for kind, label in [('minio_media', 'MinIO media mirror'), ('db_copy_tb', 'DB-to-TB copy')]:
+        run = _last(kind)
+        if not run:
+            problems.append(f"{label}: NO backup run recorded yet")
+            continue
+        if run.status == 'failed':
+            problems.append(f"{label}: last run FAILED ({run.started_at})")
+            continue
+        if not run.finished_at:
+            problems.append(f"{label}: run stuck in 'running' since {run.started_at}")
+            continue
+        age = (now - run.finished_at).total_seconds() / 3600
+        if age > STALE_HOURS:
+            problems.append(f"{label}: last success {age:.1f}h ago (> {STALE_HOURS}h SLA)")
+        if run.status == 'partial':
+            problems.append(f"{label}: last run PARTIAL ({run.items_failed} failed items)")
+
+    if problems:
+        msg = "\U0001F6A8 *Nidhi Backup Watchdog ALERT*\n" + chr(10).join("- " + p for p in problems)
+        send_telegram_alert(msg, parse_mode='Markdown')
+        for p in problems:
+            SystemAlert.objects.create(
+                title=f"Backup health: {p.split(':')[0]}",
+                message=p, level='error', is_read=False,
+            )
+        logger.error(f"Backup watchdog found {len(problems)} problem(s)")
+        return False
+    logger.info("Backup watchdog: all backups healthy")
+    return True
+
+
+    full_message = header + drafted
+
+    send_telegram_alert(full_message, parse_mode='Markdown')
+    logger.info(f'AI alert summary sent to Telegram ({total} alerts)')
+    return full_message
+
+
+# ==============================================================================
+# NIDHI-MANAGED BACKUP CONTROL PLANE  (SCRUM data-safety)
+# ------------------------------------------------------------------------------
+# These tasks replace fragile host cron scripts. The schedule lives in
+# nidhi_backend/celery.py (VCS-tracked, survives container restart) and every run
+# is recorded in BackupStatus so the control plane can prove backups are happening.
+# Media + DB copies land on the devserver TB disk (/backups_media) — the VPS cannot
+# hold long-term backups for all apps' media.
+# ==============================================================================
+
+import shutil
+from .models import BackupStatus, StorageBucket, DatabaseInstance, AuditLog
+
+
+def _mc_mirror_bucket(bucket_name, endpoint, access_key, secret_key, dest_dir):
+    """Mirror a single MinIO bucket to dest_dir using the host mc binary.
+
+    Uses a fixed alias SRC (mc's MC_HOST_ env lookup rejects underscores in alias names).
+    Returns (bytes_transferred, error_or_None).
+    """
+    os.makedirs(dest_dir, exist_ok=True)
+    env = dict(os.environ)
+    # The backup worker runs on the devserver. Dev buckets are recorded with
+    # endpoint=localhost:9000 (the host's own MinIO); inside the container that
+    # resolves to the container itself, so rewrite localhost -> docker host gateway.
+    raw_host = endpoint.split('://')[-1]
+    if raw_host.startswith('localhost:'):
+        raw_host = '172.21.0.1:' + raw_host.split(':', 1)[1]
+    host_val = "http://{}:{}@{}".format(access_key, secret_key, raw_host)
+    env["MC_HOST_SRC"] = host_val
+    cmd = [
+        'mc', 'mirror', '--overwrite', '--quiet',
+        "SRC/{}".format(bucket_name),
+        dest_dir + '/',
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    if res.returncode != 0:
+        return 0, res.stderr
+    try:
+        size = sum(f.stat().st_size for f in pathlib.Path(dest_dir).rglob('*') if f.is_file())
+    except Exception:
+        size = 0
+    return size, None
+
+
+@shared_task
+def backup_all_minio_media():
+    """Mirror every production StorageBucket from the VPS MinIO to the devserver TB disk.
+
+    Nidhi-managed replacement for the host pull_minio_backup.sh. Reports to BackupStatus +
+    AuditLog and alerts on failure.
+    """
+    run = BackupStatus.objects.create(kind='minio_media', target='all', status='running')
+    total = ok = failed = 0
+    bytes_total = 0
+    errors = []
+    try:
+        prod_buckets = StorageBucket.objects.filter(status='available')
+        total = prod_buckets.count()
+        media_root = os.environ.get('TB_MEDIA_DIR', '/backups_media/minio')
+        for bucket in prod_buckets:
+            dest = os.path.join(media_root, bucket.bucket_name)
+            size, err = _mc_mirror_bucket(
+                bucket.bucket_name, bucket.endpoint,
+                bucket.access_key, bucket.secret_key, dest,
+            )
+            if err:
+                failed += 1
+                errors.append("{}: {}".format(bucket.bucket_name, err[:120]))
+            else:
+                ok += 1
+                bytes_total += size
+        run.items_total = total
+        run.items_ok = ok
+        run.items_failed = failed
+        run.bytes_transferred = bytes_total
+        run.destination = media_root
+        run.status = 'completed' if failed == 0 else ('partial' if ok else 'failed')
+        run.finished_at = timezone.now()
+        run.detail = ("\n".join(errors))[:2000] if errors else "All buckets mirrored."
+        run.save()
+        AuditLog.objects.create(
+            actor_type='system', actor='celery:backup_all_minio_media',
+            action='backup_db', target='minio_media', server='devserver-TB',
+            detail="mirrored {}/{} buckets, {} bytes".format(ok, total, bytes_total),
+            success=(failed == 0),
+        )
+        if failed:
+            send_telegram_alert(
+                "*MinIO Media Backup PARTIAL/FAIL*\n{}/{} buckets mirrored to TB disk.\n{}".format(
+                    ok, total, "\n".join(errors[:5]))
+            )
+    except Exception as e:
+        run.status = 'failed'
+        run.finished_at = timezone.now()
+        run.detail = str(e)[:2000]
+        run.save()
+        send_telegram_alert("*MinIO Media Backup FAILED*\n{}".format(str(e)[:300]))
+    return run.status
+
+
+@shared_task
+def copy_db_backups_to_tb_disk():
+    """Copy completed encrypted DB dumps from the nidhi_backups volume to the TB disk.
+
+    Guarantees prod + dev DB dumps also have a durable copy on the devserver TB disk
+    (in addition to the Telegram off-site mirror).
+    """
+    run = BackupStatus.objects.create(kind='db_copy_tb', target='all', status='running')
+    try:
+        src_root = PERSISTENT_BACKUP_DIR  # /backups (nidhi_backups volume)
+        dest_root = os.environ.get('TB_DB_DIR', '/backups_media/db')
+        os.makedirs(dest_root, exist_ok=True)
+        if not os.path.isdir(src_root):
+            raise RuntimeError("Source backup dir {} not found".format(src_root))
+        copied = 0
+        bytes_total = 0
+        for f in os.listdir(src_root):
+            if f.endswith('.enc'):
+                sp = os.path.join(src_root, f)
+                dp = os.path.join(dest_root, f)
+                shutil.copy2(sp, dp)
+                copied += 1
+                bytes_total += os.path.getsize(dp)
+        run.items_total = copied
+        run.items_ok = copied
+        run.bytes_transferred = bytes_total
+        run.destination = dest_root
+        run.status = 'completed'
+        run.finished_at = timezone.now()
+        run.detail = "Copied {} encrypted dumps to TB disk.".format(copied)
+        run.save()
+    except Exception as e:
+        run.status = 'failed'
+        run.finished_at = timezone.now()
+        run.detail = str(e)[:2000]
+        run.save()
+        send_telegram_alert("*DB-to-TB copy FAILED*\n{}".format(str(e)[:300]))
+    return run.status
