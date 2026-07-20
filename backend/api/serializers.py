@@ -33,7 +33,7 @@ class DatabaseInstanceSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'db_name', 'db_user', 'server', 'server_name', 'product', 'product_name',
             'status', 'created_by_sso_id', 'is_deleted', 'deleted_at',
-            'created_at', 'updated_at'
+            'backup_enabled', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'db_user', 'status', 'created_by_sso_id', 'is_deleted', 'deleted_at', 'created_at', 'updated_at']
 

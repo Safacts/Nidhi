@@ -77,7 +77,8 @@ def provision_bucket(request):
         secret_key='',
         endpoint=endpoint,
         created_by_sso_id=sso_user_id,
-        status='provisioning'
+        status='provisioning',
+        backup_enabled=(server.environment_type == 'production') if server else bucket_name.endswith('-production-media'),
     )
     
     from .tasks import provision_bucket_task
@@ -108,13 +109,13 @@ def list_buckets(request):
     if not assignments.exists():
         buckets = StorageBucket.objects.all().values(
             'id', 'bucket_name', 'endpoint', 'status', 'created_at', 'product__name',
-            'server__name', 'server__host', 'server__environment_type'
+            'server__name', 'server__host', 'server__environment_type', 'backup_enabled'
         )
     else:
         product_ids = [a.product_id for a in assignments]
         buckets = StorageBucket.objects.filter(product_id__in=product_ids).values(
             'id', 'bucket_name', 'endpoint', 'status', 'created_at', 'product__name',
-            'server__name', 'server__host', 'server__environment_type'
+            'server__name', 'server__host', 'server__environment_type', 'backup_enabled'
         )
     
     return Response(list(buckets), status=status.HTTP_200_OK)
@@ -616,3 +617,32 @@ def copy_bucket_objects(request, source_bucket_id, dest_bucket_id):
         return Response({"error": "Copy timed out (>1 hour)"}, status=status.HTTP_408_REQUEST_TIMEOUT)
     except Exception as e:
         return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsFoundingEngineer])
+def toggle_bucket_backup(request, bucket_id):
+    """Enable/disable Nidhi backup for a StorageBucket (per-instance opt-in).
+
+    Production buckets are locked ON. Development buckets may be toggled.
+    Body: {"backup_enabled": true|false}
+    """
+    bucket = get_object_or_404(StorageBucket, id=bucket_id)
+    if bucket.is_production and not request.data.get('backup_enabled', True):
+        return Response(
+            {"error": "Production buckets are always backed up and cannot be disabled."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    enabled = bool(request.data.get('backup_enabled', not bucket.backup_enabled))
+    bucket.backup_enabled = enabled
+    bucket.save(update_fields=['backup_enabled', 'updated_at'])
+    from .models import AuditLog
+    AuditLog.objects.create(
+        actor_type='founding_engineer', actor=getattr(request.user, 'username', 'unknown'),
+        action='toggle_backup', target=bucket.bucket_name, server=bucket.server.name if bucket.server else 'n/a',
+        detail=f"bucket backup_enabled set to {enabled}", success=True,
+    )
+    return Response(
+        {"id": str(bucket.id), "bucket_name": bucket.bucket_name, "backup_enabled": bucket.backup_enabled},
+        status=status.HTTP_200_OK,
+    )

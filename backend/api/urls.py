@@ -31,6 +31,7 @@ urlpatterns = [
     path('buckets/<uuid:bucket_id>/create-folder/', bucket_views.create_folder, name='create_folder'),
     path('buckets/<uuid:bucket_id>/rename/', bucket_views.rename_object, name='rename_object'),
     path('buckets/<uuid:bucket_id>/delete-multiple/', bucket_views.delete_multiple_objects, name='delete_multiple_objects'),
+    path('buckets/<uuid:bucket_id>/toggle-backup/', bucket_views.toggle_bucket_backup, name='toggle_bucket_backup'),
 
     path('sso/callback/', views.sso_callback, name='sso_callback'),
     path('me/', views.me, name='me'),
@@ -39,6 +40,7 @@ urlpatterns = [
     # Backups monitoring + manual trigger (SCRUM data-safety UI)
     path('backups/', views.backups_overview, name='backups_overview'),
     path('instances/<uuid:instance_id>/backup/', views.trigger_backup, name='trigger_backup'),
+    path('instances/<uuid:instance_id>/toggle-backup/', views.toggle_instance_backup, name='toggle_instance_backup'),
 
     # Heartbeat / bypass detection (SCRUM-260)
     path('heartbeat/', views.heartbeat, name='heartbeat'),

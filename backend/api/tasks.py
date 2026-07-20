@@ -99,11 +99,26 @@ def _rotate_local_encrypted(instance_db_name):
         pass
 
 @shared_task
-def backup_all_databases():
-    """Iterates through all active DatabaseInstances and triggers a backup for each."""
-    instances = DatabaseInstance.objects.filter(is_deleted=False)
-    for instance in instances:
+def backup_all_databases(include_development=None):
+    """Iterates through all active DatabaseInstances and triggers a backup for each.
+
+    By default, ONLY production databases are backed up. Development databases are
+    skipped unless explicitly requested:
+      - include_development=True passed directly, OR
+      - env BACKUP_DEVELOPMENT_DBS=1 is set (used for one-off manual dev backups).
+    """
+    if include_development is None:
+        include_development = os.environ.get('BACKUP_DEVELOPMENT_DBS', '0') == '1'
+    qs = DatabaseInstance.objects.filter(is_deleted=False, backup_enabled=True)
+    if not include_development:
+        # Keep only instances whose server is a PRODUCTION environment.
+        qs = qs.exclude(server__environment_type='development')
+    skipped = (DatabaseInstance.objects.filter(is_deleted=False, server__environment_type='development').count()
+               if not include_development else 0)
+    for instance in qs:
         backup_single_database.delay(instance.id)
+    if skipped:
+        logger.info(f"backup_all_databases skipped {skipped} development instance(s) (BACKUP_DEVELOPMENT_DBS not set).")
 
 @shared_task
 def backup_single_database(instance_id):
@@ -375,7 +390,7 @@ def refresh_delayed_replicas():
     once per day, the replica always lags the primary by up to 24h — so accidental data
     destruction/corruption on the primary is NOT immediately propagated, giving a recovery window.
     """
-    instances = DatabaseInstance.objects.filter(is_deleted=False, status='available')
+    instances = DatabaseInstance.objects.filter(is_deleted=False, status='available', backup_enabled=True)
     count = 0
     for instance in instances:
         if instance.db_name.endswith('_delayed_replica'):
@@ -560,7 +575,8 @@ def replicate_prod_to_dev(prod_instance_id, dev_server_id, new_db_name):
             db_user=db_user,
             db_password_temp=new_password,
             created_by_sso_id="replication_task",
-            status='provisioning'
+            status='provisioning',
+            backup_enabled=False,  # dev instances are opt-in for backup
         )
         
         # 3. Create DB and Role on Dev Server
@@ -1069,7 +1085,7 @@ def backup_all_minio_media():
     bytes_total = 0
     errors = []
     try:
-        prod_buckets = StorageBucket.objects.filter(status='available')
+        prod_buckets = StorageBucket.objects.filter(status='available', backup_enabled=True)
         total = prod_buckets.count()
         media_root = os.environ.get('TB_MEDIA_DIR', '/backups_media/minio')
         for bucket in prod_buckets:
@@ -1289,7 +1305,7 @@ def replicate_all_buckets():
     have no available counterpart so partial success is reported, not a hard failure.
     """
     from .models import StorageBucket
-    buckets = StorageBucket.objects.filter(status='available')
+    buckets = StorageBucket.objects.filter(status='available', backup_enabled=True)
     ok = failed = 0
     for b in buckets:
         # Only drive replication from one side to avoid double-work: replicate

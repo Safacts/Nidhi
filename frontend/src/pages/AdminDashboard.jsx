@@ -104,6 +104,34 @@ const AdminDashboard = () => {
     else showToast('Failed to queue backup', 'error');
   };
 
+  // Per-instance backup opt-in (dev DBs). Prod is locked ON.
+  const toggleInstanceBackup = async (db) => {
+    try {
+      const token = localStorage.getItem('nidhi_token');
+      const res = await fetch(`/nidhi-api/instances/${db.id}/toggle-backup/`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ backup_enabled: !db.backup_enabled })
+      });
+      if (res.ok) { showToast('Backup setting updated', 'success'); fetchInstances(); }
+      else { const d = await res.json().catch(()=>({})); showToast(d.error || 'Cannot change backup setting', 'error'); }
+    } catch (e) { showToast('Network error', 'error'); }
+  };
+
+  // Per-instance backup opt-in (dev buckets). Prod is locked ON.
+  const toggleBucketBackup = async (bucket) => {
+    try {
+      const token = localStorage.getItem('nidhi_token');
+      const res = await fetch(`/nidhi-api/buckets/${bucket.id}/toggle-backup/`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ backup_enabled: !bucket.backup_enabled })
+      });
+      if (res.ok) { showToast('Bucket backup setting updated', 'success'); fetchBuckets(); }
+      else { const d = await res.json().catch(()=>({})); showToast(d.error || 'Cannot change bucket backup setting', 'error'); }
+    } catch (e) { showToast('Network error', 'error'); }
+  };
+
   const fetchBuckets = async () => {
     try {
       const res = await fetch(`/nidhi-api/buckets/`, { headers: getHeaders() });
@@ -285,6 +313,7 @@ const AdminDashboard = () => {
                     <th className="px-6 py-4">Status</th>
                     <th className="px-6 py-4">Created By</th>
                     <th className="px-6 py-4">Actions</th>
+                    <th className="px-6 py-4">Backup</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 dark:divide-slate-700/50">
@@ -305,6 +334,19 @@ const AdminDashboard = () => {
                         >
                           <Copy className="w-3 h-3" /> Replicate
                         </button>
+                      </td>
+                      <td className="px-6 py-4">
+                        {db.server__environment_type === 'prod' || db.environment_type === 'prod' ? (
+                          <span className="px-2 py-1 text-xs rounded-full bg-[#4ade80]/20 text-emerald-600 dark:text-[#98FF98] border border-[#4ade80]/40">Always ON</span>
+                        ) : (
+                          <button
+                            onClick={() => toggleInstanceBackup(db)}
+                            className={`px-3 py-1 rounded text-xs border ${db.backup_enabled ? 'bg-amber-100 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-300 dark:border-amber-500/20' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 border-slate-300 dark:border-slate-600'}`}
+                            title={db.backup_enabled ? 'Backups enabled - click to disable' : 'Backups disabled - click to enable'}
+                          >
+                            {db.backup_enabled ? 'Enabled' : 'Disabled'}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -544,6 +586,7 @@ const AdminDashboard = () => {
                     <th className="px-6 py-4">Status</th>
                     <th className="px-6 py-4">Created</th>
                     <th className="px-6 py-4">Actions</th>
+                    <th className="px-6 py-4">Backup</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 dark:divide-slate-700/50">
@@ -577,6 +620,19 @@ const AdminDashboard = () => {
                         >
                           <ExternalLink className="w-3 h-3" /> Explore
                         </button>
+                      </td>
+                      <td className="px-6 py-4">
+                        {bucket.server__environment_type === 'prod' ? (
+                          <span className="px-2 py-1 text-xs rounded-full bg-[#4ade80]/20 text-emerald-600 dark:text-[#98FF98] border border-[#4ade80]/40">Always ON</span>
+                        ) : (
+                          <button
+                            onClick={() => toggleBucketBackup(bucket)}
+                            className={`px-3 py-1 rounded text-xs border ${bucket.backup_enabled ? 'bg-amber-100 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-300 dark:border-amber-500/20' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 border-slate-300 dark:border-slate-600'}`}
+                            title={bucket.backup_enabled ? 'Backups enabled - click to disable' : 'Backups disabled - click to enable'}
+                          >
+                            {bucket.backup_enabled ? 'Enabled' : 'Disabled'}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}

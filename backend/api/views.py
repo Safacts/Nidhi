@@ -178,7 +178,8 @@ def auto_provision_instance(request):
         db_user=db_user,
         db_password_temp=new_password,
         created_by_sso_id='system-auto',
-        status='provisioning'
+        status='provisioning',
+        backup_enabled=(server.environment_type == 'production'),
     )
     instance.save()
     
@@ -307,7 +308,8 @@ def database_instance_list_create(request):
             db_user=db_user,
             db_password_temp=new_password,
             created_by_sso_id=created_by_sso_id,
-            status='provisioning'
+            status='provisioning',
+            backup_enabled=(server.environment_type == 'production'),
         )
         instance.save()
         
@@ -885,3 +887,31 @@ def retrieve_cached_credentials(request, project_slug, environment):
             result["bucket_secret_key"] = bucket.secret_key
     
     return Response(result, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([IsFoundingEngineer])
+def toggle_instance_backup(request, instance_id):
+    """Enable/disable Nidhi backup for a DatabaseInstance (per-instance opt-in).
+
+    Production instances are locked ON (cannot be disabled via UI). Development
+    instances may be toggled. Body: {"backup_enabled": true|false}
+    """
+    inst = get_object_or_404(DatabaseInstance, id=instance_id, is_deleted=False)
+    if inst.is_production and not request.data.get('backup_enabled', True):
+        return Response(
+            {"error": "Production databases are always backed up and cannot be disabled."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    enabled = bool(request.data.get('backup_enabled', not inst.backup_enabled))
+    inst.backup_enabled = enabled
+    inst.save(update_fields=['backup_enabled', 'updated_at'])
+    AuditLog.objects.create(
+        actor_type='founding_engineer', actor=getattr(request.user, 'username', 'unknown'),
+        action='toggle_backup', target=inst.db_name, server=inst.server.name,
+        detail=f"backup_enabled set to {enabled}", success=True,
+    )
+    return Response(
+        {"id": str(inst.id), "db_name": inst.db_name, "backup_enabled": inst.backup_enabled},
+        status=status.HTTP_200_OK,
+    )

@@ -145,9 +145,21 @@ class DatabaseInstance(models.Model):
     # Critical Data Safety
     is_deleted = models.BooleanField(default=False, help_text="Soft delete flag.")
     deleted_at = models.DateTimeField(null=True, blank=True)
-    
+
+    # Backup enrollment. Production instances are backed up automatically (default True).
+    # Development instances are OPT-IN (default False) and enabled per-instance from the UI.
+    backup_enabled = models.BooleanField(
+        default=True,
+        help_text="Whether Nidhi's backup control plane backs this up. "
+                  "Prod defaults on; dev defaults off (opt-in via UI).",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    @property
+    def is_production(self):
+        return self.server and self.server.environment_type == 'production'
 
     def __str__(self):
         return f"{self.db_name} on {self.server.name} ({'DELETED' if self.is_deleted else self.status})"
@@ -226,10 +238,26 @@ class StorageBucket(models.Model):
     endpoint = models.CharField(max_length=255) # e.g. localhost:9000
     
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='provisioning')
-    created_by_sso_id = models.CharField(max_length=255) 
-    
+    created_by_sso_id = models.CharField(max_length=255)
+
+    # Backup enrollment. Production buckets are backed up automatically (default True).
+    # Development buckets are OPT-IN (default False) and enabled per-instance from the UI.
+    backup_enabled = models.BooleanField(
+        default=True,
+        help_text="Whether Nidhi's backup control plane mirrors this bucket. "
+                  "Prod defaults on; dev defaults off (opt-in via UI).",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    @property
+    def is_production(self):
+        if self.server:
+            return self.server.environment_type == 'production'
+        # Buckets are often provisioned without a linked server; fall back to the
+        # naming convention used across Nidhi: *-production-media vs *-development-media.
+        return self.bucket_name.endswith('-production-media')
 
     def __str__(self):
         return f"Bucket {self.bucket_name} ({self.status})"
