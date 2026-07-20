@@ -1056,13 +1056,6 @@ def monitor_backup_health():
     return True
 
 
-    full_message = header + drafted
-
-    send_telegram_alert(full_message, parse_mode='Markdown')
-    logger.info(f'AI alert summary sent to Telegram ({total} alerts)')
-    return full_message
-
-
 # ==============================================================================
 # NIDHI-MANAGED BACKUP CONTROL PLANE  (SCRUM data-safety)
 # ------------------------------------------------------------------------------
