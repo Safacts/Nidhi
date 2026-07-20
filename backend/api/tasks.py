@@ -226,19 +226,23 @@ def ship_encrypted_backup(backup_id, dump_path):
 
     telegram_bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
     telegram_chat_id = os.environ.get('TELEGRAM_CHAT_ID')
-    if telegram_bot_token and telegram_chat_id:
+    # Support multiple recipients (comma-separated). All recipients receive every backup
+    # so the owner/founder (Uma Mahesh Sir) and the founding engineer both get off-site copies.
+    chat_ids = [c.strip() for c in (telegram_chat_id or '').split(',') if c.strip()] if telegram_chat_id else []
+    if telegram_bot_token and chat_ids:
         try:
             parts = _split_file(enc_path)
             total = len(parts)
-            for i, part in enumerate(parts, start=1):
-                caption = (
+            for chat in chat_ids:
+                for i, part in enumerate(parts, start=1):
+                    caption = (
                     f"🔒 Nidhi encrypted backup\n"
                     f"DB: {instance.db_name} @ {instance.server.name}\n"
                     f"{backup.created_at.strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
                     f"AES-256-CBC (openssl pbkdf2) — part {i}/{total}"
-                )
-                _telegram_send_document(telegram_bot_token, telegram_chat_id, part, caption=caption)
-            logger.info(f"Encrypted backup for {instance.db_name} mirrored to Telegram in {total} part(s).")
+                    )
+                    _telegram_send_document(telegram_bot_token, chat, part, caption=caption)
+            logger.info(f"Encrypted backup for {instance.db_name} mirrored to Telegram ({len(chat_ids)} recipient(s)) in {total} part(s).")
             for p in parts:
                 if p != enc_path and os.path.exists(p):
                     try:
