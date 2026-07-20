@@ -106,19 +106,40 @@ def backup_all_databases(include_development=None):
     skipped unless explicitly requested:
       - include_development=True passed directly, OR
       - env BACKUP_DEVELOPMENT_DBS=1 is set (used for one-off manual dev backups).
+
+    Records a `db_dump` BackupStatus ledger entry so the backup watchdog
+    (monitor_backup_health) can prove the nightly DB-dump cycle actually ran.
     """
-    if include_development is None:
-        include_development = os.environ.get('BACKUP_DEVELOPMENT_DBS', '0') == '1'
-    qs = DatabaseInstance.objects.filter(is_deleted=False, backup_enabled=True)
-    if not include_development:
-        # Keep only instances whose server is a PRODUCTION environment.
-        qs = qs.exclude(server__environment_type='development')
-    skipped = (DatabaseInstance.objects.filter(is_deleted=False, server__environment_type='development').count()
-               if not include_development else 0)
-    for instance in qs:
-        backup_single_database.delay(instance.id)
-    if skipped:
-        logger.info(f"backup_all_databases skipped {skipped} development instance(s) (BACKUP_DEVELOPMENT_DBS not set).")
+    run = BackupStatus.objects.create(kind='db_dump', target='all', status='running')
+    try:
+        if include_development is None:
+            include_development = os.environ.get('BACKUP_DEVELOPMENT_DBS', '0') == '1'
+        qs = DatabaseInstance.objects.filter(is_deleted=False, backup_enabled=True)
+        if not include_development:
+            # Keep only instances whose server is a PRODUCTION environment.
+            qs = qs.exclude(server__environment_type='development')
+        skipped = (DatabaseInstance.objects.filter(is_deleted=False, server__environment_type='development').count()
+                   if not include_development else 0)
+        count = qs.count()
+        if count == 0:
+            run.status = 'failed'
+            run.detail = 'No eligible (backup_enabled) databases to back up.'
+            run.save()
+            logger.error("backup_all_databases: no eligible databases; marking run FAILED.")
+            return
+        for instance in qs:
+            backup_single_database.delay(instance.id)
+        run.status = 'completed'
+        run.detail = f"Queued {count} database backup(s); {skipped} dev instance(s) skipped."
+        run.save()
+        if skipped:
+            logger.info(f"backup_all_databases skipped {skipped} development instance(s) (BACKUP_DEVELOPMENT_DBS not set).")
+    except Exception as e:
+        run.status = 'failed'
+        run.detail = f"Exception: {str(e)[:300]}"
+        run.save()
+        logger.error(f"backup_all_databases failed: {e}")
+        raise
 
 @shared_task
 def backup_single_database(instance_id):
@@ -149,16 +170,21 @@ def backup_single_database(instance_id):
         )
 
         os.environ['PGPASSWORD'] = server.root_password
-        command = [
-            'pg_dump',
-            '-h', server.host,
-            '-p', str(server.port),
-            '-U', server.root_user,
-            '-F', 'c',  # Custom format for pg_restore
-            '-f', backup_path,
-            instance.db_name
-        ]
-        result = subprocess.run(command, capture_output=True, text=True)
+        try:
+            command = [
+                'pg_dump',
+                '-h', server.host,
+                '-p', str(server.port),
+                '-U', server.root_user,
+                '-F', 'c',  # Custom format for pg_restore
+                '-f', backup_path,
+                instance.db_name
+            ]
+            result = subprocess.run(command, capture_output=True, text=True)
+        finally:
+            # Don't leak the prod DB password into the shared worker process env for
+            # subsequent tasks in the same worker.
+            os.environ.pop('PGPASSWORD', None)
 
         if result.returncode != 0:
             backup_record.status = 'failed'
@@ -994,7 +1020,12 @@ def monitor_backup_health():
         return BackupStatus.objects.filter(kind=kind).order_by('-started_at').first()
 
     problems = []
-    for kind, label in [('minio_media', 'MinIO media mirror'), ('db_copy_tb', 'DB-to-TB copy')]:
+    for kind, label in [
+        ('db_dump', 'Database dump (off-site)'),
+        ('minio_media', 'MinIO media mirror'),
+        ('db_copy_tb', 'DB-to-TB copy'),
+        ('bucket_replica', 'Bucket replication'),
+    ]:
         run = _last(kind)
         if not run:
             problems.append(f"{label}: NO backup run recorded yet")
@@ -1309,12 +1340,15 @@ def replicate_all_buckets():
     have no available counterpart so partial success is reported, not a hard failure.
     """
     from .models import StorageBucket
-    buckets = StorageBucket.objects.filter(status='available', backup_enabled=True)
-    ok = failed = 0
+    # Drive replication from the PRODUCTION side only. replicate_bucket resolves the
+    # counterpart by name (prod<->dev) and mirrors one direction, so queuing both sides
+    # would mirror every object twice. Production buckets are the source of truth.
+    buckets = StorageBucket.objects.filter(
+        status='available', backup_enabled=True, bucket_name__endswith='-production-media'
+    )
+    ok = 0
     for b in buckets:
-        # Only drive replication from one side to avoid double-work: replicate
-        # production buckets to development (and vice-versa if no prod counterpart).
-        res = replicate_bucket.delay(str(b.id))
-        # .delay returns an AsyncResult; the actual work runs async. Count intent here.
+        replicate_bucket.delay(str(b.id))
         ok += 1
+    logger.info(f"Queued {ok} production-bucket replication(s) (dev counterparts resolved inside replicate_bucket).")
     return "queued {} bucket replication(s)".format(ok)
