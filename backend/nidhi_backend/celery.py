@@ -61,6 +61,13 @@ app.conf.beat_schedule = {
         'task': 'api.tasks.backup_all_minio_media',
         'schedule': crontab(minute=30, hour=2),  # 02:30 every day
     },
+    'replicate-buckets-nightly': {
+        # Bucket->bucket media replication (MinIO->MinIO), mirroring the DB-to-DB
+        # replicate_prod_to_dev pattern. Replicates every available bucket to its
+        # prod<->dev counterpart. Runs after the TB-disk mirror.
+        'task': 'api.tasks.replicate_all_buckets',
+        'schedule': crontab(minute=0, hour=3),  # 03:00 every day
+    },
     'copy-db-backups-to-tb-disk-nightly': {
         # Copy encrypted DB dumps (volume) to durable TB disk copy.
         'task': 'api.tasks.copy_db_backups_to_tb_disk',

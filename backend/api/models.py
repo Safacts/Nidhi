@@ -179,6 +179,7 @@ class BackupStatus(models.Model):
         ('db_dump', 'Database Dump'),
         ('minio_media', 'MinIO Media Mirror'),
         ('db_copy_tb', 'DB Copy to TB Disk'),
+        ('bucket_replica', 'Bucket Replication'),
     ]
     STATUS_CHOICES = [
         ('running', 'Running'),
@@ -245,7 +246,8 @@ class AuditLog(models.Model):
         ('restore_db', 'Restore DB'), ('replicate_db', 'Replicate DB'), ('backup_db', 'Backup DB'),
         ('backup_failed', 'Backup Failed'), ('liveness_check', 'Liveness Check'),
         ('liveness_changed', 'Liveness Changed'), ('provision_bucket', 'Provision Bucket'),
-        ('delete_bucket', 'Delete Bucket'), ('execute_query', 'Execute Query'), ('login', 'Login'),
+        ('delete_bucket', 'Delete Bucket'), ('replicate_bucket', 'Replicate Bucket'),
+        ('execute_query', 'Execute Query'), ('login', 'Login'),
     ]
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     actor_type = models.CharField(max_length=30, choices=ACTOR_TYPES, default='system')

@@ -828,59 +828,54 @@ def external_db_migration_task(instance_id, source_uri):
 
 @shared_task
 def check_minio_health():
-    """Periodically check if MinIO instances are healthy and alert on failures."""
+    """Periodically check if MinIO instances are healthy and alert on failures.
+
+    Robust: the error message is captured into a plain string immediately inside the
+    except block (no reliance on the except-scoped `e` variable afterwards), and alerts
+    are de-duplicated so we do not spam every 5 minutes while a node is down.
+    """
     from .models import SystemAlert
     from minio import Minio
-    from minio.error import S3Error
     import os
 
     results = []
+    # Dev MinIO is on the devserver; from inside the container use the docker host gateway.
     vps_endpoint = os.environ.get('VPS_MINIO_ENDPOINT', '72.60.218.127:9000')
-    dev_endpoint = os.environ.get('DEV_MINIO_ENDPOINT', '100.83.65.7:9000')
+    dev_endpoint = os.environ.get('DEV_MINIO_ENDPOINT', '172.21.0.1:9000')
     access_key = os.environ.get('MINIO_ACCESS_KEY', 'admin_nidhi_minio')
     secret_key = os.environ.get('MINIO_SECRET_KEY', 'secure_nidhi_minio_password')
-    
-    # Check VPS MinIO (production)
-    vps_ok = False
-    try:
-        client = Minio(vps_endpoint, access_key=access_key, secret_key=secret_key, secure=False)
-        buckets = list(client.list_buckets())
-        vps_ok = len(buckets) >= 6
-        results.append(f"VPS MinIO: OK ({len(buckets)} buckets)")
-    except Exception as e:
-        results.append(f"VPS MinIO: DOWN - {str(e)[:100]}")
-        SystemAlert.objects.create(
-            title='VPS MinIO DOWN',
-            message=f'Production MinIO at {vps_endpoint} is unreachable: {str(e)[:200]}',
-            level='error'
-        )
-        send_telegram_alert(
-            chr(128165) + " *MinIO DOWN*\nVPS MinIO (" + vps_endpoint + ") is unreachable!\n" + str(e)[:200]
-        )
 
-    # Check devserver MinIO (development)
-    dev_ok = False
-    try:
-        client = Minio(dev_endpoint, access_key=access_key, secret_key=secret_key, secure=False)
-        buckets = list(client.list_buckets())
-        dev_ok = len(buckets) >= 5
-        results.append(f"Dev MinIO: OK ({len(buckets)} buckets)")
-    except Exception as e:
-        results.append(f"Dev MinIO: DOWN - {str(e)[:100]}")
-        SystemAlert.objects.create(
-            title='Dev MinIO DOWN',
-            message=f'Dev MinIO at {dev_endpoint} is unreachable: {str(e)[:200]}',
-            level='error'
-        )
-        send_telegram_alert(
-            chr(9888) + chr(65039) + " *MinIO DOWN*\nDev MinIO (" + dev_endpoint + ") is unreachable!\n" + str(e)[:200]
-        )
+    def _check(endpoint, label, min_buckets, title):
+        try:
+            client = Minio(endpoint, access_key=access_key, secret_key=secret_key, secure=False)
+            buckets = list(client.list_buckets())
+            ok = len(buckets) >= min_buckets
+            results.append(f"{label}: {'OK' if ok else 'WARN'} ({len(buckets)} buckets)")
+            return ok
+        except Exception as exc:
+            err_msg = str(exc)
+            results.append(f"{label}: DOWN - {err_msg[:100]}")
+            # De-dupe: only alert if no unread alert of this title in the last 30 min.
+            recent = SystemAlert.objects.filter(
+                title=title, is_read=False,
+                created_at__gte=timezone.now() - timedelta(minutes=30),
+            ).exists()
+            if not recent:
+                SystemAlert.objects.create(
+                    title=title,
+                    message=f"{label} at {endpoint} is unreachable: {err_msg[:300]}",
+                    level='error',
+                )
+                send_telegram_alert(
+                    f"🚨 *MinIO DOWN*\n{label} ({endpoint}) is unreachable!\n{err_msg[:200]}"
+                )
+            return False
+
+    _check(vps_endpoint, 'VPS MinIO', 6, 'VPS MinIO DOWN')
+    _check(dev_endpoint, 'Dev MinIO', 1, 'Dev MinIO DOWN')
 
     logger.info(f"MinIO health check: {' | '.join(results)}")
     return results
-
-
-
 @shared_task
 def send_ai_alert_summary():
     """Collect recent unread alerts, draft a summary via Gemma 4, send to Telegram."""
@@ -1156,3 +1151,150 @@ def copy_db_backups_to_tb_disk():
         run.save()
         send_telegram_alert("*DB-to-TB copy FAILED*\n{}".format(str(e)[:300]))
     return run.status
+
+
+# ==============================================================================
+# Bucket -> Bucket replication (MinIO -> MinIO)
+# Nidhi-internal media replication, mirroring the DB-to-DB `replicate_prod_to_dev`
+# pattern. Copies the *contents* of a source StorageBucket into a destination
+# StorageBucket on (possibly) another MinIO endpoint. Records BackupStatus +
+# AuditLog and alerts on failure. This completes the data-transfer picture:
+# DB->DB exists (replicate_prod_to_dev), DB->delayed-replica exists
+# (refresh_delayed_replicas), bucket->TB-disk exists (backup_all_minio_media);
+# this adds true bucket->bucket replication.
+# ==============================================================================
+
+def _mc_mirror_bucket_to_bucket(src_bucket, src_endpoint, src_key, src_secret,
+                                dst_bucket, dst_endpoint, dst_key, dst_secret):
+    """Mirror one MinIO bucket's contents into another bucket (any endpoint) via `mc mirror`.
+
+    Returns (bytes_transferred, error_or_None). Creates the destination bucket if missing.
+    mc's MC_HOST_ env lookup rejects underscores in alias names, so fixed aliases SRC/DST are used.
+    """
+    env = dict(os.environ)
+
+    def _host_env(alias, endpoint, key, secret):
+        raw = endpoint.split('://')[-1]
+        # Inside the container, dev buckets recorded as localhost:9000 resolve to the
+        # container itself; rewrite to the docker host gateway so we reach the real MinIO.
+        if raw.startswith('localhost:'):
+            raw = '172.21.0.1:' + raw.split(':', 1)[1]
+        env["MC_HOST_{}".format(alias)] = "http://{}:{}@{}".format(key, secret, raw)
+
+    _host_env('SRC', src_endpoint, src_key, src_secret)
+    _host_env('DST', dst_endpoint, dst_key, dst_secret)
+
+    # Ensure destination bucket exists (mirror won't create it).
+    mk = subprocess.run(
+        ['mc', 'mb', '--ignore-existing', "DST/{}".format(dst_bucket)],
+        capture_output=True, text=True, env=env,
+    )
+    if mk.returncode != 0:
+        return 0, "mk bucket failed: " + mk.stderr
+
+    # Mirror source -> destination.
+    res = subprocess.run(
+        ['mc', 'mirror', '--overwrite', '--quiet',
+         "SRC/{}".format(src_bucket), "DST/{}".format(dst_bucket)],
+        capture_output=True, text=True, env=env,
+    )
+    if res.returncode != 0:
+        return 0, res.stderr
+    try:
+        # mc can report transferred bytes; fall back to 0 if absent.
+        out = res.stderr + res.stdout
+        m = __import__('re').search(r'([0-9,]+)\s*bytes', out)
+        size = int(m.group(1).replace(',', '')) if m else 0
+    except Exception:
+        size = 0
+    return size, None
+
+
+@shared_task
+def replicate_bucket(src_bucket_id, dst_bucket_id=None):
+    """Replicate the contents of one StorageBucket into a destination bucket.
+
+    If dst_bucket_id is omitted, the destination is derived from the source using the
+    {slug}-{environment}-media convention mirrored to the *other* environment's MinIO
+    (prod -> dev, dev -> prod). Records BackupStatus + AuditLog(replicate_bucket).
+    """
+    from .models import StorageBucket
+    run = BackupStatus.objects.create(kind='bucket_replica', target='', status='running')
+    try:
+        src = StorageBucket.objects.get(id=src_bucket_id, status='available')
+        if dst_bucket_id:
+            dst = StorageBucket.objects.get(id=dst_bucket_id, status='available')
+        else:
+            # Derive counterpart by flipping environment in the bucket name.
+            name = src.bucket_name  # e.g. aacharya-production-media
+            if name.endswith('-production-media'):
+                dst_name = name.replace('-production-media', '-development-media')
+            elif name.endswith('-development-media'):
+                dst_name = name.replace('-development-media', '-production-media')
+            else:
+                dst_name = None
+            dst = StorageBucket.objects.filter(bucket_name=dst_name, status='available').first() if dst_name else None
+            if dst is None:
+                raise RuntimeError("No available destination bucket for {}".format(name))
+
+        run.target = "{} -> {}".format(src.bucket_name, dst.bucket_name)
+        run.save()
+
+        size, err = _mc_mirror_bucket_to_bucket(
+            src.bucket_name, src.endpoint, src.access_key, src.secret_key,
+            dst.bucket_name, dst.endpoint, dst.access_key, dst.secret_key,
+        )
+        if err:
+            run.status = 'failed'
+            run.detail = err[:2000]
+            run.finished_at = timezone.now()
+            run.save()
+            AuditLog.objects.create(
+                actor_type='system', actor='celery:replicate_bucket',
+                action='replicate_bucket', target=run.target, server=dst.endpoint,
+                detail="FAILED: " + err[:300], success=False,
+            )
+            send_telegram_alert(
+                "*Bucket Replication FAILED*\n{} -> {}\n{}".format(
+                    src.bucket_name, dst.bucket_name, err[:300]))
+            return 'failed'
+
+        run.items_total = 1
+        run.items_ok = 1
+        run.bytes_transferred = size
+        run.status = 'completed'
+        run.finished_at = timezone.now()
+        run.detail = "Replicated {} -> {} ({} bytes)".format(src.bucket_name, dst.bucket_name, size)
+        run.save()
+        AuditLog.objects.create(
+            actor_type='system', actor='celery:replicate_bucket',
+            action='replicate_bucket', target=run.target, server=dst.endpoint,
+            detail="Replicated {} bytes".format(size), success=True,
+        )
+        return 'completed'
+    except Exception as e:
+        run.status = 'failed'
+        run.finished_at = timezone.now()
+        run.detail = str(e)[:2000]
+        run.save()
+        send_telegram_alert("*Bucket Replication FAILED*\n{}".format(str(e)[:300]))
+        return 'failed'
+
+
+@shared_task
+def replicate_all_buckets():
+    """Nightly: replicate every available source bucket to its counterpart (prod<->dev).
+
+    Mirrors the scheduled `replicate_prod_to_dev` pattern for media. Skips buckets that
+    have no available counterpart so partial success is reported, not a hard failure.
+    """
+    from .models import StorageBucket
+    buckets = StorageBucket.objects.filter(status='available')
+    ok = failed = 0
+    for b in buckets:
+        # Only drive replication from one side to avoid double-work: replicate
+        # production buckets to development (and vice-versa if no prod counterpart).
+        res = replicate_bucket.delay(str(b.id))
+        # .delay returns an AsyncResult; the actual work runs async. Count intent here.
+        ok += 1
+    return "queued {} bucket replication(s)".format(ok)

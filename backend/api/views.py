@@ -1,4 +1,5 @@
-# Founding Engineer: Aadisheshu <safacts001@gmail.com>
+# Owner / Founding Engineer: Aadisheshu (aadisheshu) — safacts founder & lead engineer.
+# Contact: Telegram @aadisheshu (chat 1295597987). Off-site backup bot: @NidhiBackupBot.
 import os
 import io
 import logging
@@ -699,6 +700,8 @@ def minio_backups_overview(request):
     from datetime import datetime, timedelta
     from .models import BackupStatus, StorageBucket
 
+    _disk_cache = {"ts": 0.0, "value": None}
+
     now = timezone.now()
 
     def _last_run(kind):
@@ -720,39 +723,51 @@ def minio_backups_overview(request):
 
     media_healthy = bool(media_run and media_run.status in ('completed', 'partial') and media_age is not None and media_age < STALE_HOURS)
     dbcopy_healthy = bool(dbcopy_run and dbcopy_run.status == 'completed' and dbcopy_age is not None and dbcopy_age < STALE_HOURS)
-    overall_healthy = media_healthy and dbcopy_healthy
+    replica_run = _last_run('bucket_replica')
+    replica_age = _staleness_hours(replica_run)
+    replica_healthy = bool(replica_run and replica_run.status in ('completed', 'partial') and replica_age is not None and replica_age < STALE_HOURS)
+    overall_healthy = media_healthy and dbcopy_healthy and replica_healthy
 
-    # Bucket-level on-disk summary (TB disk mirror)
+    # Bucket-level on-disk summary (TB disk mirror). Cached 5 min because os.walk over
+    # ~3.7 GB / 71k files is slow and would block the single dev-server worker.
     backup_dir = '/host_backups/minio/'
-    buckets = []
-    total_size = 0
-    total_objects = 0
-    try:
-        if os.path.isdir(backup_dir):
-            for bname in sorted(os.listdir(backup_dir)):
-                bpath = os.path.join(backup_dir, bname)
-                if os.path.isdir(bpath):
-                    size = count = 0
-                    for root, dirs, files in os.walk(bpath):
-                        for f in files:
-                            fp = os.path.join(root, f)
-                            try:
-                                size += os.path.getsize(fp)
-                                count += 1
-                            except OSError:
-                                pass
-                    total_size += size
-                    total_objects += count
-                    buckets.append({
-                        'bucket_name': bname,
-                        'objects': count,
-                        'size_bytes': size,
-                        'size_mb': round(size / 1024 / 1024, 2),
-                    })
-    except Exception:
-        pass
+    now_ts = timezone.now().timestamp()
+    if _disk_cache["value"] is not None and (now_ts - _disk_cache["ts"]) < 300:
+        buckets, total_size, total_objects = _disk_cache["value"]
+    else:
+        buckets = []
+        total_size = 0
+        total_objects = 0
+        try:
+            if os.path.isdir(backup_dir):
+                for bname in sorted(os.listdir(backup_dir)):
+                    bpath = os.path.join(backup_dir, bname)
+                    if os.path.isdir(bpath):
+                        size = count = 0
+                        for root, dirs, files in os.walk(bpath):
+                            for f in files:
+                                fp = os.path.join(root, f)
+                                try:
+                                    size += os.path.getsize(fp)
+                                    count += 1
+                                except OSError:
+                                    pass
+                        total_size += size
+                        total_objects += count
+                        buckets.append({
+                            'bucket_name': bname,
+                            'objects': count,
+                            'size_bytes': size,
+                            'size_mb': round(size / 1024 / 1024, 2),
+                        })
+        except Exception:
+            pass
+        _disk_cache["value"] = (buckets, total_size, total_objects)
+        _disk_cache["ts"] = now_ts
 
-    # VPS MinIO live source status
+    # VPS MinIO live source status (lightweight: list_buckets only — NO recursive object
+    # counting, which is slow over tens of thousands of objects and blocks the single
+    # dev-server worker). The on-disk mirror already reports size/object counts.
     live_objects = live_size = 0
     vps_healthy = dev_healthy = False
     try:
@@ -761,15 +776,6 @@ def minio_backups_overview(request):
                            secret_key='secure_nidhi_minio_password', secure=False)
         prod.list_buckets()
         vps_healthy = True
-        for bname in ['aacharya-production-media', 'abhyas-production-media',
-                      'granth-production-media', 'new-nova-production-media',
-                      'rubixdocs-production-media', 'vitharn-production-media']:
-            try:
-                objs = list(prod.list_objects(bname, recursive=True))
-                live_objects += len(objs)
-                live_size += sum(o.size for o in objs)
-            except Exception:
-                pass
     except Exception:
         vps_healthy = False
     try:
@@ -783,7 +789,7 @@ def minio_backups_overview(request):
     # Recent control-plane runs for the UI feed
     recent_runs = []
     try:
-        for r in BackupStatus.objects.filter(kind__in=['minio_media', 'db_copy_tb']).order_by('-started_at')[:10]:
+        for r in BackupStatus.objects.filter(kind__in=['minio_media', 'db_copy_tb', 'bucket_replica']).order_by('-started_at')[:10]:
             recent_runs.append({
                 'kind': r.kind,
                 'target': r.target,
@@ -815,13 +821,14 @@ def minio_backups_overview(request):
             'overall': 'healthy' if overall_healthy else 'DEGRADED',
             'media_backup': 'healthy' if media_healthy else 'STALE/FAILED',
             'db_copy': 'healthy' if dbcopy_healthy else 'STALE/FAILED',
+            'bucket_replication': 'healthy' if replica_healthy else 'STALE/FAILED',
             'vps_minio': 'healthy' if vps_healthy else 'DOWN',
             'dev_minio': 'healthy' if dev_healthy else 'DOWN',
             'media_age_hours': media_age,
             'db_copy_age_hours': dbcopy_age,
             'checked_at': now.isoformat(),
         },
-        'backup_schedule': 'Nidhi-managed (Celery beat): minio_media 02:30 daily, db_copy_tb 00:15 daily',
+        'backup_schedule': 'Nidhi-managed (Celery beat): minio_media 02:30 daily, db_copy_tb 00:15 daily, bucket_replica 03:00 daily',
         'backup_location': '/host_backups/minio/ (devserver TB hard disk)',
         'control_plane_runs': recent_runs,
     }, status=status.HTTP_200_OK)

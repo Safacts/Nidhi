@@ -427,7 +427,7 @@ const AdminDashboard = () => {
         {activeTab === 'minio-backups' && (
           <div className="lg:col-span-4">
             <h2 className="text-xl font-semibold mb-4 text-slate-700 dark:text-slate-300">MinIO Backup Monitoring</h2>
-            <p className="text-sm text-slate-500 mb-4">Nidhi-managed daily mirror of all MinIO buckets from VPS to the devserver TB hard disk (02:30) plus a DB-to-TB copy (00:15). Continuously watched by the backup watchdog.</p>
+            <p className="text-sm text-slate-500 mb-4">Nidhi-managed daily mirror of all MinIO buckets from VPS to the devserver TB hard disk (02:30), a DB-to-TB copy (00:15), and a bucket→bucket replication between prod and dev MinIO (03:00). Continuously watched by the backup watchdog.</p>
 
             {/* Health banner */}
             {minioBackups?.health && (
@@ -444,6 +444,7 @@ const AdminDashboard = () => {
                   <span>DB→TB copy: <b>{minioBackups.health.db_copy}</b>{minioBackups.health.db_copy_age_hours != null ? ` (${minioBackups.health.db_copy_age_hours}h ago)` : ''}</span>
                   <span>VPS MinIO: <b>{minioBackups.health.vps_minio}</b></span>
                   <span>Dev MinIO: <b>{minioBackups.health.dev_minio}</b></span>
+                  <span>Bucket→Bucket replica: <b>{minioBackups.health.bucket_replication || 'n/a'}</b></span>
                 </div>
               </div>
             )}
