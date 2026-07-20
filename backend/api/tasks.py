@@ -124,6 +124,7 @@ def backup_all_databases(include_development=None):
         if count == 0:
             run.status = 'failed'
             run.detail = 'No eligible (backup_enabled) databases to back up.'
+            run.finished_at = timezone.now()
             run.save()
             logger.error("backup_all_databases: no eligible databases; marking run FAILED.")
             return
@@ -131,12 +132,14 @@ def backup_all_databases(include_development=None):
             backup_single_database.delay(instance.id)
         run.status = 'completed'
         run.detail = f"Queued {count} database backup(s); {skipped} dev instance(s) skipped."
+        run.finished_at = timezone.now()
         run.save()
         if skipped:
             logger.info(f"backup_all_databases skipped {skipped} development instance(s) (BACKUP_DEVELOPMENT_DBS not set).")
     except Exception as e:
         run.status = 'failed'
         run.detail = f"Exception: {str(e)[:300]}"
+        run.finished_at = timezone.now()
         run.save()
         logger.error(f"backup_all_databases failed: {e}")
         raise
@@ -1033,7 +1036,7 @@ def monitor_backup_health():
         if run.status == 'failed':
             problems.append(f"{label}: last run FAILED ({run.started_at})")
             continue
-        if not run.finished_at:
+        if run.status == 'running' and not run.finished_at:
             problems.append(f"{label}: run stuck in 'running' since {run.started_at}")
             continue
         age = (now - run.finished_at).total_seconds() / 3600
