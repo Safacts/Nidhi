@@ -12,8 +12,8 @@
 set -uo pipefail
 
 STATE_DIR="${NIDHI_STATE_DIR:-/var/lib/nidhi-deploy}"
-REGISTRY="${NIDHI_REGISTRY:-aadisheshu}"
-BACKEND_IMAGE="${REGISTRY}/nidhi_backend"
+REGISTRY="${NIDHI_REGISTRY:-ghcr.io/vitharn-hq}"
+BACKEND_IMAGE="${REGISTRY}/nidhi-backend"
 BACKEND_CONTAINER="${NIDHI_BACKEND_CONTAINER:-nidhi-backend}"
 LASTGOOD_TAG="${NIDHI_LASTGOOD_TAG:-lastgood}"
 HISTORY_DEPTH="${NIDHI_HISTORY_DEPTH:-3}"
