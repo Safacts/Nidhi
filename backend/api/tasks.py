@@ -1576,7 +1576,32 @@ def clone_database_data(source_instance_id, target_instance_id):
             tgt.save()
             raise Exception(f'Failed to restore to target DB {tgt.db_name}: {restore_res.stderr}')
 
-        # 4. Cleanup
+        # 4. Reassign ownership of all objects to the target user
+        conn3 = psycopg2.connect(
+            dbname=tgt.db_name,
+            user=tgt_srv.root_user,
+            password=tgt_srv.root_password,
+            host=tgt_srv.host,
+            port=tgt_srv.port
+        )
+        conn3.autocommit = True
+        cur3 = conn3.cursor()
+        cur3.execute("SELECT tablename FROM pg_tables WHERE schemaname='public'")
+        for (tbl,) in cur3.fetchall():
+            cur3.execute(sql.SQL('ALTER TABLE public.{tbl} OWNER TO {user}').format(
+                tbl=sql.Identifier(tbl), user=sql.Identifier(tgt.db_user)))
+        cur3.execute("SELECT sequence_name FROM information_schema.sequences WHERE sequence_schema='public'")
+        for (seq,) in cur3.fetchall():
+            cur3.execute(sql.SQL('ALTER SEQUENCE public.{seq} OWNER TO {user}').format(
+                seq=sql.Identifier(seq), user=sql.Identifier(tgt.db_user)))
+        cur3.execute("SELECT viewname FROM pg_views WHERE schemaname='public' AND viewname NOT LIKE 'pg_%'")
+        for (vw,) in cur3.fetchall():
+            cur3.execute(sql.SQL('ALTER VIEW public.{vw} OWNER TO {user}').format(
+                vw=sql.Identifier(vw), user=sql.Identifier(tgt.db_user)))
+        cur3.close()
+        conn3.close()
+
+        # 5. Cleanup
         os.remove(dump_path)
         return f'Cloned {src.db_name} -> {tgt.db_name}'
 
