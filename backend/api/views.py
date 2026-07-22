@@ -108,6 +108,8 @@ def auto_provision_instance(request):
         
     project_slug = request.data.get('project_slug', '').lower().replace(' ', '_')
     environment = request.data.get('environment', 'production').lower()
+    server_env = 'development' if environment == 'local' else environment
+    clone_from = request.data.get('clone_from', None)
     
     if not project_slug:
         return Response({"error": "project_slug is required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -120,10 +122,12 @@ def auto_provision_instance(request):
             description=f'Auto-created for {project_slug}'
         )
     
-    # 2. Check if instance already exists (case-insensitive)
+    # 2. Check if instance already exists (case-insensitive, by convention db_name)
+    db_name = f"{project_slug.replace(chr(45), chr(95))}_{environment}"[:50]
     existing_instance = DatabaseInstance.objects.filter(
         product=product,
-        server__environment_type=environment,
+        server__environment_type=server_env,
+        db_name__iexact=db_name,
         is_deleted=False
     ).first()
     
@@ -141,7 +145,13 @@ def auto_provision_instance(request):
             status='available'
         ).first()
         
-        response_data = {"database_url": db_url}
+        # Inject standardized routing base path
+        routing_base = "/" if environment == "production" else f"/{project_slug}/"
+        
+        response_data = {
+            "database_url": db_url,
+            "ROUTING_BASE_PATH": routing_base,
+        }
         
         if bucket and bucket.status == 'available':
             response_data["bucket_name"] = bucket.bucket_name
@@ -158,7 +168,7 @@ def auto_provision_instance(request):
         return Response(response_data, status=status.HTTP_200_OK)
         
     # 3. Find available server
-    server = DatabaseServer.objects.filter(environment_type=environment, is_active=True).first()
+    server = DatabaseServer.objects.filter(environment_type=server_env, is_active=True).first()
     if not server:
         return Response({"error": f"No active server found for environment '{environment}'"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
@@ -212,6 +222,7 @@ def auto_provision_instance(request):
             'endpoint': bucket_endpoint,
             'created_by_sso_id': 'system-auto',
             'status': 'provisioning',
+            'backup_enabled': (environment == 'production'),
         }
     )
     if bucket.status == 'provisioning':
@@ -219,6 +230,24 @@ def auto_provision_instance(request):
 
     db_url = f"postgres://{db_user}:{new_password}@{server.host}:{server.port}/{db_name}"
     
+    # 5. Clone data from source environment if requested
+    if clone_from:
+        from .tasks import clone_database_data, clone_bucket_data
+        source_instance = DatabaseInstance.objects.filter(
+            product=product,
+            server__environment_type=clone_from,
+            is_deleted=False
+        ).first()
+        source_bucket = StorageBucket.objects.filter(
+            product=product,
+            bucket_name__endswith="-" + clone_from + "-media",
+            status='available'
+        ).first()
+        if source_instance:
+            clone_database_data.delay(source_instance.id, instance.id)
+        if source_bucket:
+            clone_bucket_data.delay(source_bucket.id, bucket.id)
+
     # Return bucket credentials if available or provisioning
     bucket_response = {
         "bucket_name": bucket_name,
@@ -236,8 +265,12 @@ def auto_provision_instance(request):
     if nidhi_server:
         bucket_response["media_base_url"] = f"{nidhi_server.rstrip('/')}/api/media"
     
+    # Inject standardized routing base path
+    routing_base = "/" if environment == "production" else f"/{project_slug}/"
+    
     return Response({
         "database_url": db_url,
+        "ROUTING_BASE_PATH": routing_base,
         **bucket_response,
     }, status=status.HTTP_202_ACCEPTED)
 
@@ -479,6 +512,7 @@ def heartbeat(request):
 
     project_slug = request.data.get('project_slug', '').lower().replace(' ', '_')
     environment = request.data.get('environment', 'production').lower()
+    server_env = 'development' if environment == 'local' else environment
     reported_fp = request.data.get('database_fingerprint', '')
 
     if not project_slug or not reported_fp:
@@ -492,7 +526,7 @@ def heartbeat(request):
         return Response({"error": "Unknown project"}, status=status.HTTP_404_NOT_FOUND)
 
     instance = DatabaseInstance.objects.filter(
-        product=product, server__environment_type=environment, is_deleted=False
+        product=product, server__environment_type=server_env, is_deleted=False
     ).first()
     if not instance:
         return Response({"error": "No provisioned instance for project/environment"},
@@ -606,8 +640,8 @@ def _get_minio_client_for_bucket(bucket):
     if not Minio:
         return None
     endpoint = bucket.endpoint
-    if endpoint in ('localhost:9000', 'minio:9000', '127.0.0.1:9000'):
-        endpoint = os.environ.get('MINIO_ENDPOINT', '100.83.65.7:9000')
+    if endpoint in ('localhost:9000', 'minio:9000', '127.0.0.1:9000', '172.21.0.1:9000'):
+        endpoint = os.environ.get('MINIO_ENDPOINT', 'nidhi-minio-1:9000')
     return Minio(endpoint, access_key=bucket.access_key, secret_key=bucket.secret_key, secure=False)
 
 
@@ -781,7 +815,7 @@ def minio_backups_overview(request):
     except Exception:
         vps_healthy = False
     try:
-        dev = MinioClient('172.21.0.1:9000', access_key='admin_nidhi_minio',
+        dev = MinioClient('nidhi-minio-1:9000', access_key='admin_nidhi_minio',
                           secret_key='secure_nidhi_minio_password', secure=False)
         dev.list_buckets()
         dev_healthy = True
@@ -847,6 +881,7 @@ def retrieve_cached_credentials(request, project_slug, environment):
     
     project_slug = project_slug.lower().replace(' ', '_')
     environment = environment.lower()
+    server_env = 'development' if environment == 'local' else environment
     
     # Auth check
     token = request.headers.get('Authorization', '')
@@ -861,7 +896,7 @@ def retrieve_cached_credentials(request, project_slug, environment):
     # Look up existing instance (do NOT create)
     instance = DatabaseInstance.objects.filter(
         product=product,
-        server__environment_type=environment,
+        server__environment_type=server_env,
         is_deleted=False
     ).first()
     

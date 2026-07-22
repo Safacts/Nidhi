@@ -90,7 +90,7 @@ class DatabaseServer(models.Model):
     port = models.IntegerField(default=5432)
     root_user = models.CharField(max_length=100, default='postgres')
     root_password = EncryptedCharField(max_length=512, help_text="Encrypted at rest (Fernet). Decrypted transparently on access.")
-    environment_type = models.CharField(max_length=50, choices=[('development', 'Development'), ('production', 'Production')])
+    environment_type = models.CharField(max_length=50, choices=[('development', 'Development'), ('production', 'Production'), ('local', 'Local')])
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -334,3 +334,32 @@ class InstanceHeartbeat(models.Model):
     def __str__(self):
         state = 'OK' if self.is_valid else 'MISMATCH'
         return f"Heartbeat {self.instance.db_name} ({state})"
+
+
+class DeployStatus(models.Model):
+    """Deploy-drift ledger (SCRUM automation safety).
+
+    Tracks each production app's ghcr `:latest` digest as seen by Nidhi (running on the
+    devserver control plane). A new `:latest` that is never confirmed deployed within
+    STALE_HOURS means the VPS Watchtower stalled (e.g. ghcr auth failure) or CI failed to
+    push — i.e. the automated deploy pipeline silently stopped. The hourly
+    `verify_deploy_drift` task compares and alerts on Telegram + SystemAlert.
+
+    Nidhi is INTERNAL and runs only on the devserver; this task never deploys anything to
+    the VPS — it only observes ghcr and raises the alarm.
+    """
+    app = models.CharField(max_length=64, unique=True, help_text="e.g. vitharn, aacharya, nova, ebooks, rubix")
+    image = models.CharField(max_length=255, help_text="ghcr.io/vitharn-hq/<app>:latest")
+    last_latest_digest = models.CharField(max_length=64, blank=True, null=True)
+    last_latest_seen_at = models.DateTimeField(null=True, blank=True,
+                                                help_text="When this :latest digest was first observed")
+    last_deployed_digest = models.CharField(max_length=64, blank=True, null=True,
+                                             help_text="Digest we last confirmed the VPS is running")
+    last_deployed_at = models.DateTimeField(null=True, blank=True)
+    last_checked_at = models.DateTimeField(auto_now=True)
+    last_alerted_at = models.DateTimeField(null=True, blank=True)
+    stale_alerted = models.BooleanField(default=False)
+
+    def __str__(self):
+        drifted = self.last_latest_digest and self.last_latest_digest != self.last_deployed_digest
+        return f"Deploy {self.app} ({'DRIFT' if drifted else 'OK'})"

@@ -4,6 +4,7 @@ import subprocess
 import pathlib
 import requests
 import logging
+from typing import Optional
 from datetime import datetime, timedelta
 from celery import shared_task
 from django.utils import timezone
@@ -890,7 +891,7 @@ def check_minio_health():
     results = []
     # Dev MinIO is on the devserver; from inside the container use the docker host gateway.
     vps_endpoint = os.environ.get('VPS_MINIO_ENDPOINT', '72.60.218.127:9000')
-    dev_endpoint = os.environ.get('DEV_MINIO_ENDPOINT', '172.21.0.1:9000')
+    dev_endpoint = os.environ.get('DEV_MINIO_ENDPOINT', 'nidhi-minio-1:9000')
     access_key = os.environ.get('MINIO_ACCESS_KEY', 'admin_nidhi_minio')
     secret_key = os.environ.get('MINIO_SECRET_KEY', 'secure_nidhi_minio_password')
 
@@ -1049,13 +1050,147 @@ def monitor_backup_health():
         msg = "\U0001F6A8 *Nidhi Backup Watchdog ALERT*\n" + chr(10).join("- " + p for p in problems)
         send_telegram_alert(msg, parse_mode='Markdown')
         for p in problems:
-            SystemAlert.objects.create(
-                title=f"Backup health: {p.split(':')[0]}",
-                message=p, level='error', is_read=False,
-            )
+            title = f"Backup health: {p.split(':')[0]}"
+            recent = SystemAlert.objects.filter(
+                title=title, is_read=False,
+                created_at__gte=timezone.now() - timedelta(hours=1),
+            ).exists()
+            if not recent:
+                SystemAlert.objects.create(
+                    title=title,
+                    message=p, level='error', is_read=False,
+                )
         logger.error(f"Backup watchdog found {len(problems)} problem(s)")
         return False
     logger.info("Backup watchdog: all backups healthy")
+    return True
+
+
+# ==============================================================================
+# DEPLOY-DRIFT WATCHDOG  (automation safety — catches silent deploy stalls)
+# ------------------------------------------------------------------------------
+# Nidhi is INTERNAL and runs only on the devserver control plane. This task does NOT
+# deploy anything; it observes ghcr.io and alerts if a newly-published `:latest`
+# image is never confirmed running on the VPS within STALE_HOURS — which means the
+# Watchtower auto-deploy stalled (e.g. ghcr auth failure, as happened 2026-07-20) or
+# CI failed to push. Positive deploy confirmation comes from Watchtower's own
+# Telegram notifications; this task only fires on the FAILURE case.
+# ==============================================================================
+
+PROD_APPS = [
+    ('vitharn', 'ghcr.io/vitharn-hq/vitharn-backend'),
+    ('aacharya', 'ghcr.io/vitharn-hq/aacharya'),
+    ('nova', 'ghcr.io/vitharn-hq/nova-backend'),
+    ('ebooks', 'ghcr.io/rubix-bench/ebooks'),
+    ('rubix', 'ghcr.io/vitharn-hq/rubix-it-solutions'),
+]
+DEPLOY_DRIFT_STALE_HOURS = 6
+
+
+def _ghcr_latest_digest(image: str) -> "Optional[str]":
+    """Return the sha256 digest of an image's `latest` tag.
+
+    Uses the GitHub Packages API (reliable digest resolution, unlike the ghcr
+    registry /manifests/latest path which 404s). Needs a GitHub PAT with
+    read:packages in GHCR_PAT. For images under a different org (e.g. rubix-bench)
+    the PAT must have access there too, else it returns None (skipped, not alerted).
+    """
+    token = os.environ.get('GHCR_PAT')
+    if not token:
+        return None
+    # image like ghcr.io/<org>/<name>
+    parts = image.split('ghcr.io/')[-1].split('/')
+    if len(parts) != 2:
+        return None
+    org, name = parts
+    try:
+        resp = requests.get(
+            f'https://api.github.com/orgs/{org}/packages/container/{name}/versions',
+            headers={'Authorization': f'Bearer {token}',
+                     'Accept': 'application/vnd.github+json'},
+            params={'per_page': '100'},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return None
+        newest = None
+        newest_ts = None
+        for v in resp.json():
+            if not isinstance(v, dict):
+                continue
+            digest = v.get('name', '')
+            if not digest.startswith('sha256:'):
+                continue
+            # `latest` tracks the most recently pushed version in our CI pipeline
+            ts = v.get('created_at')
+            if newest_ts is None or (ts and ts > newest_ts):
+                newest_ts, newest = ts, digest
+        return newest.replace('sha256:', '') if newest else None
+    except Exception as e:
+        logger.warning(f"deploy-drift: ghcr digest fetch failed for {image}: {e}")
+        return None
+
+
+def verify_deploy_drift() -> bool:
+    """Hourly watchdog: alert if a published `:latest` is never confirmed deployed.
+
+    Confirmation (last_deployed_digest) is updated by the VPS Watchtower path: when
+    Watchtower successfully updates a container it notifies Telegram; the matching
+    `:latest` digest is then considered deployed. As a fallback, if we cannot confirm,
+    a digest that stays newer than last_deployed for > STALE_HOURS is flagged.
+    """
+    from .models import DeployStatus, SystemAlert
+    now = timezone.now()
+    problems = []
+
+    for app, image in PROD_APPS:
+        digest = _ghcr_latest_digest(image)
+        if not digest:
+            continue  # registry unreachable -> skip, don't false-alert
+        row, _ = DeployStatus.objects.get_or_create(app=app, defaults={'image': image})
+        if row.last_latest_digest != digest:
+            # new image published since we last looked
+            row.last_latest_digest = digest
+            row.last_latest_seen_at = now
+            # a fresh publish resets the stale-alert latch
+            row.stale_alerted = False
+            row.save(update_fields=['last_latest_digest', 'last_latest_seen_at',
+                                    'stale_alerted', 'last_checked_at'])
+            # if previously deployed digest unknown, seed it to avoid first-run false alarm
+            if not row.last_deployed_digest:
+                row.last_deployed_digest = digest
+                row.last_deployed_at = now
+                row.save(update_fields=['last_deployed_digest', 'last_deployed_at'])
+            continue
+
+        # same :latest as before — check if it was ever confirmed deployed
+        if row.last_deployed_digest == digest:
+            continue  # current :latest is what's deployed -> healthy
+        # :latest changed earlier but never confirmed deployed -> measure staleness
+        if row.last_latest_seen_at and \
+                (now - row.last_latest_seen_at).total_seconds() / 3600 > DEPLOY_DRIFT_STALE_HOURS:
+            if not row.stale_alerted:
+                problems.append(
+                    f"{app} ({image}): new `:latest` (sha256:{digest[:12]}…) published "
+                    f"{(now - row.last_latest_seen_at).total_seconds()/3600:.1f}h ago "
+                    f"but not confirmed deployed — Watchtower may have stalled or ghcr "
+                    f"auth on VPS failed."
+                )
+                row.stale_alerted = True
+                row.last_alerted_at = now
+                row.save(update_fields=['stale_alerted', 'last_alerted_at', 'last_checked_at'])
+
+    if problems:
+        msg = "🚨 *Nidhi Deploy-Drift Watchdog ALERT*\n" + "\n".join("- " + p for p in problems)
+        send_telegram_alert(msg, parse_mode='Markdown')
+        for p in problems:
+            SystemAlert.objects.create(
+                title=f"Deploy drift: {p.split('(')[0].strip()}",
+                message=p, level='error', is_read=False,
+            )
+        logger.error(f"Deploy-drift watchdog found {len(problems)} problem(s)")
+        return False
+    logger.info("Deploy-drift watchdog: all apps deployed at latest")
     return True
 
 
@@ -1081,12 +1216,14 @@ def _mc_mirror_bucket(bucket_name, endpoint, access_key, secret_key, dest_dir):
     """
     os.makedirs(dest_dir, exist_ok=True)
     env = dict(os.environ)
-    # The backup worker runs on the devserver. Dev buckets are recorded with
-    # endpoint=localhost:9000 (the host's own MinIO); inside the container that
-    # resolves to the container itself, so rewrite localhost -> docker host gateway.
+    # The backup worker runs inside Docker. Dev buckets may be recorded with
+    # endpoint=localhost:9000 or 172.21.0.1:9000; inside the container use the
+    # Docker service name instead.
     raw_host = endpoint.split('://')[-1]
-    if raw_host.startswith('localhost:'):
-        raw_host = '172.21.0.1:' + raw_host.split(':', 1)[1]
+    if raw_host.startswith('localhost:') or raw_host.startswith('127.0.0.1:'):
+        raw_host = 'nidhi-minio-1:' + raw_host.split(':', 1)[1]
+    elif raw_host.startswith('172.21.0.1:'):
+        raw_host = 'nidhi-minio-1:' + raw_host.split(':', 1)[1]
     host_val = "http://{}:{}@{}".format(access_key, secret_key, raw_host)
     env["MC_HOST_SRC"] = host_val
     cmd = [
@@ -1222,10 +1359,14 @@ def _mc_mirror_bucket_to_bucket(src_bucket, src_endpoint, src_key, src_secret,
 
     def _host_env(alias, endpoint, key, secret):
         raw = endpoint.split('://')[-1]
-        # Inside the container, dev buckets recorded as localhost:9000 resolve to the
-        # container itself; rewrite to the docker host gateway so we reach the real MinIO.
-        if raw.startswith('localhost:'):
-            raw = '172.21.0.1:' + raw.split(':', 1)[1]
+        # Inside the container, dev buckets recorded as localhost:9000 or 172.21.0.1:9000
+        # need to be rewritten to use the Docker service name.
+        if raw.startswith('localhost:') or raw.startswith('127.0.0.1:'):
+            raw = 'nidhi-minio-1:' + raw.split(':', 1)[1]
+        elif raw.startswith('172.21.0.1:'):
+            raw = 'nidhi-minio-1:' + raw.split(':', 1)[1]
+        elif raw.startswith('100.83.65.7:'):
+            raw = 'nidhi-minio-1:' + raw.split(':', 1)[1]
         env["MC_HOST_{}".format(alias)] = "http://{}:{}@{}".format(key, secret, raw)
 
     _host_env('SRC', src_endpoint, src_key, src_secret)
@@ -1348,3 +1489,118 @@ def replicate_all_buckets():
         ok += 1
     logger.info(f"Queued {ok} production-bucket replication(s) (dev counterparts resolved inside replicate_bucket).")
     return "queued {} bucket replication(s)".format(ok)
+
+import secrets
+import string
+import psycopg2
+from psycopg2 import sql
+from .models import DatabaseServer, StorageBucket
+
+
+@shared_task
+def clone_database_data(source_instance_id, target_instance_id):
+    """Clone data from one DatabaseInstance to another (data-plane pg_dump/pg_restore)."""
+    try:
+        src = DatabaseInstance.objects.get(id=source_instance_id, is_deleted=False)
+        tgt = DatabaseInstance.objects.get(id=target_instance_id, is_deleted=False)
+
+        src_srv = src.server
+        tgt_srv = tgt.server
+
+        dump_path = os.path.join('/tmp', f'clone_{src.db_name}_{datetime.now().strftime("%s")}.dump')
+
+        # 1. pg_dump from source
+        os.environ['PGPASSWORD'] = src_srv.root_password
+        dump_cmd = [
+            'pg_dump', '-h', src_srv.host, '-p', str(src_srv.port),
+            '-U', src_srv.root_user, '-F', 'c', '-f', dump_path, src.db_name
+        ]
+        dump_res = subprocess.run(dump_cmd, capture_output=True, text=True)
+        if dump_res.returncode != 0:
+            raise Exception(f'Failed to dump source DB {src.db_name}: {dump_res.stderr}')
+
+        # 2. On target server: terminate connections, drop & recreate, grant perms
+        conn = psycopg2.connect(
+            dbname='postgres',
+            user=tgt_srv.root_user,
+            password=tgt_srv.root_password,
+            host=tgt_srv.host,
+            port=tgt_srv.port
+        )
+        conn.autocommit = True
+        cur = conn.cursor()
+
+        # Terminate connections to target DB
+        cur.execute(sql.SQL("""
+            SELECT pg_terminate_backend(pid)
+            FROM pg_stat_activity
+            WHERE datname = {db} AND pid <> pg_backend_pid()
+        """).format(db=sql.Literal(tgt.db_name)))
+
+        # Drop and recreate
+        cur.execute(sql.SQL('DROP DATABASE IF EXISTS {db}').format(db=sql.Identifier(tgt.db_name)))
+        cur.execute(sql.SQL('CREATE DATABASE {db}').format(db=sql.Identifier(tgt.db_name)))
+        cur.execute(sql.SQL('GRANT ALL PRIVILEGES ON DATABASE {db} TO {user}').format(
+            db=sql.Identifier(tgt.db_name), user=sql.Identifier(tgt.db_user)))
+        cur.close()
+        conn.close()
+
+        # Grant schema permissions (PG 15+)
+        conn2 = psycopg2.connect(
+            dbname=tgt.db_name,
+            user=tgt_srv.root_user,
+            password=tgt_srv.root_password,
+            host=tgt_srv.host,
+            port=tgt_srv.port
+        )
+        conn2.autocommit = True
+        cur2 = conn2.cursor()
+        cur2.execute(sql.SQL('GRANT ALL ON SCHEMA public TO {user}').format(user=sql.Identifier(tgt.db_user)))
+        cur2.execute(sql.SQL('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO {user}').format(
+            user=sql.Identifier(tgt.db_user)))
+        cur2.execute(sql.SQL('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO {user}').format(
+            user=sql.Identifier(tgt.db_user)))
+        cur2.execute(sql.SQL('ALTER ROLE {user} SET search_path TO public').format(user=sql.Identifier(tgt.db_user)))
+        cur2.close()
+        conn2.close()
+
+        # 3. pg_restore into target
+        os.environ['PGPASSWORD'] = tgt_srv.root_password
+        restore_cmd = [
+            'pg_restore', '-h', tgt_srv.host, '-p', str(tgt_srv.port),
+            '-U', tgt_srv.root_user, '-d', tgt.db_name, '-O', '-x', dump_path
+        ]
+        restore_res = subprocess.run(restore_cmd, capture_output=True, text=True)
+        if restore_res.returncode != 0:
+            tgt.status = 'failed'
+            tgt.save()
+            raise Exception(f'Failed to restore to target DB {tgt.db_name}: {restore_res.stderr}')
+
+        # 4. Cleanup
+        os.remove(dump_path)
+        return f'Cloned {src.db_name} -> {tgt.db_name}'
+
+    except Exception as e:
+        logger.error(f'clone_database_data failed: {e}')
+        return None
+
+
+@shared_task
+def clone_bucket_data(source_bucket_id, target_bucket_id):
+    """Clone objects from one StorageBucket to another via mc mirror."""
+    try:
+        src = StorageBucket.objects.get(id=source_bucket_id, status='available')
+        tgt = StorageBucket.objects.get(id=target_bucket_id, status='available')
+
+        size, err = _mc_mirror_bucket_to_bucket(
+            src.bucket_name, src.endpoint, src.access_key, src.secret_key,
+            tgt.bucket_name, tgt.endpoint, tgt.access_key, tgt.secret_key,
+        )
+        if err:
+            raise Exception(f'mc mirror failed: {err}')
+
+        return f'Cloned {src.bucket_name} -> {tgt.bucket_name} ({size} bytes)'
+
+    except Exception as e:
+        logger.error(f'clone_bucket_data failed: {e}')
+        return None

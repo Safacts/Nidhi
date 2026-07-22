@@ -55,6 +55,13 @@ app.conf.beat_schedule = {
         'task': 'api.tasks.monitor_backup_health',
         'schedule': crontab(minute=45),  # every hour at :45
     },
+    # Deploy-drift watchdog — alerts if a published :latest is never confirmed
+    # deployed (Watchtower stalled / ghcr auth fail on VPS). Nidhi is internal;
+    # this task only observes ghcr, never deploys.
+    'verify-deploy-drift-hourly': {
+        'task': 'api.tasks.verify_deploy_drift',
+        'schedule': crontab(minute=20),  # every hour at :20
+    },
     # --- Nidhi-managed backup control plane (replaces host cron) ---
     'backup-minio-media-nightly': {
         # Mirror all prod MinIO buckets to devserver TB disk. Runs after DB dumps.

@@ -34,6 +34,8 @@ services:
       - /mnt/Storage/backups/db:/backups_media/db
     env_file:
       - ./backend/.env
+    environment:
+      - DEV_MINIO_ENDPOINT=nidhi-minio-1:9000
     depends_on:
       - db
       - redis
@@ -50,6 +52,8 @@ services:
       - /mnt/Storage/backups/db:/backups_media/db
     env_file:
       - ./backend/.env
+    environment:
+      - DEV_MINIO_ENDPOINT=nidhi-minio-1:9000
     depends_on:
       - db
       - redis
